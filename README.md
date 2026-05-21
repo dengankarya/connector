@@ -30,10 +30,6 @@ DenganKarya backend
 
 All endpoints require an `X-API-KEY` header.
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/shippings/couriers` | List available courier services |
-
 ## Configuration
 
 | Env var | Description |

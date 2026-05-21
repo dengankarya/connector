@@ -26,7 +26,7 @@ COPY --from=builder /app/service /service
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=60s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -sf http://localhost:8000/health || exit 1
 
 ENTRYPOINT ["/service"]
