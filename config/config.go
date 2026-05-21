@@ -17,6 +17,15 @@ type Configuration struct {
 	BiteshipBaseURL string `env:"BITESHIP_BASE_URL"`
 
 	WilayahBaseURL string `env:"WILAYAH_BASE_URL,notEmpty" envDefault:"https://wilayah.id"`
+
+	XenditAPIKey       string `env:"XENDIT_API_KEY"`
+	XenditBaseURL      string `env:"XENDIT_BASE_URL,notEmpty" envDefault:"https://api.xendit.co"`
+	XenditWebhookToken string `env:"XENDIT_WEBHOOK_TOKEN"`
+
+	TokokaryaURL    string `env:"TOKOKARYA_URL"`
+	TokokaryaAPIKey string `env:"TOKOKARYA_API_KEY"`
+
+	RedisAddr string `env:"REDIS_ADDR,notEmpty" envDefault:"localhost:6379"`
 }
 
 func (c Configuration) IsThisRequestAuthenticated(apiKey string) bool {
