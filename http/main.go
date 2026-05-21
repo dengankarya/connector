@@ -35,6 +35,9 @@ func main() {
 		})
 	})
 
+	// ----- health check handler
+	registerHealthHandler(app)
+
 	// ------ all incoming request after this line should contain X-API-KEY headers.
 	app.Use(authenticatedRequest(cfg))
 
