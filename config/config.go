@@ -15,6 +15,8 @@ type Configuration struct {
 
 	BiteshipAPIKey  string `env:"BITESHIP_API_KEY"`
 	BiteshipBaseURL string `env:"BITESHIP_BASE_URL"`
+
+	WilayahBaseURL string `env:"WILAYAH_BASE_URL,notEmpty" envDefault:"https://wilayah.id"`
 }
 
 func (c Configuration) IsThisRequestAuthenticated(apiKey string) bool {

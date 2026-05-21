@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const courierCacheTTL = 24 * time.Hour
+const courierCacheTTL = 30 * 24 * time.Hour
 
 type cachedAggregator struct {
 	next      LogisticAggregator

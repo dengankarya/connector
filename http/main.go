@@ -10,8 +10,10 @@ import (
 
 	"github.com/dengankarya/overwatch/common"
 	"github.com/dengankarya/overwatch/config"
+	"github.com/dengankarya/overwatch/internal/region"
 	"github.com/dengankarya/overwatch/internal/shipping"
 	"github.com/dengankarya/overwatch/pkg/biteship"
+	"github.com/dengankarya/overwatch/pkg/wilayah"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	log "github.com/sirupsen/logrus"
@@ -45,6 +47,11 @@ func main() {
 	cachedAggregator := shipping.NewCachedAggregator(biteshipClient)
 	shippingSvc := shipping.NewShippingService(cachedAggregator)
 	shipping.RegisterHandlers(app.Group("/api/shippings"), shippingSvc)
+
+	wilayahClient := wilayah.NewClient(cfg.WilayahBaseURL)
+	cachedWilayah := region.NewCachedClient(wilayahClient)
+	regionSvc := region.NewRegionService(cachedWilayah)
+	region.RegisterHandlers(app.Group("/api/regions"), regionSvc)
 
 	go func() {
 		if err := app.Listen(":" + cfg.PORT); err != nil {
