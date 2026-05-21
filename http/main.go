@@ -22,6 +22,7 @@ import (
 const shutdownTimeout = 30 * time.Second
 
 func main() {
+	log.SetFormatter(&log.JSONFormatter{})
 	log.Info("starting overwatch http handler...")
 
 	cfg := config.ParseENV()
