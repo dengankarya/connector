@@ -18,7 +18,15 @@ type Configuration struct {
 }
 
 func (c Configuration) IsThisRequestAuthenticated(apiKey string) bool {
-	return strings.Contains(c.AllowedAPIKeys, apiKey)
+	if apiKey == "" {
+		return false
+	}
+	for _, key := range strings.Split(c.AllowedAPIKeys, ",") {
+		if strings.TrimSpace(key) == apiKey {
+			return true
+		}
+	}
+	return false
 }
 
 func ParseENV() *Configuration {
