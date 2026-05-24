@@ -58,3 +58,37 @@ type TrackingHistory struct {
 	UpdatedAt string `json:"updated_at"`
 	Status    string `json:"status"`
 }
+
+type GetRatesRequest struct {
+	OriginPostalCode      int        `json:"origin_postal_code,omitempty"`
+	DestinationPostalCode int        `json:"destination_postal_code,omitempty"`
+	Couriers              string     `json:"couriers"`
+	Items                 []RateItem `json:"items"`
+}
+
+type RateItem struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Value       int    `json:"value"`
+	Length      int    `json:"length,omitempty"`
+	Width       int    `json:"width,omitempty"`
+	Height      int    `json:"height,omitempty"`
+	Weight      int    `json:"weight"`
+	Quantity    int    `json:"quantity"`
+}
+
+type GetRatesResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Pricing []Rate `json:"pricing"`
+}
+
+type Rate struct {
+	CourierName        string `json:"courier_name"`
+	CourierCode        string `json:"courier_code"`
+	CourierServiceName string `json:"courier_service_name"`
+	CourierServiceCode string `json:"courier_service_code"`
+	Duration           string `json:"duration"`
+	Price              int    `json:"price"`
+	Type               string `json:"type"`
+}

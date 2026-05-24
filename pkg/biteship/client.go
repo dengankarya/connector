@@ -1,6 +1,7 @@
 package biteship
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -131,4 +132,74 @@ func (c *Client) GetPublicTracking(ctx context.Context, waybillID string, courie
 		OrderID: body.OrderID,
 		Status:  body.Status,
 	}, nil
+}
+
+func (c *Client) GetRates(ctx context.Context, req shipping.RateRequest) ([]shipping.Rate, error) {
+	url := fmt.Sprintf("%s/v1/rates/couriers", c.BaseURL)
+	
+	items := make([]RateItem, len(req.Items))
+	for i, it := range req.Items {
+		items[i] = RateItem{
+			Name:        it.Name,
+			Description: it.Description,
+			Value:       it.Value,
+			Length:      it.Length,
+			Width:       it.Width,
+			Height:      it.Height,
+			Weight:      it.Weight,
+			Quantity:    it.Quantity,
+		}
+	}
+
+	biteshipReq := GetRatesRequest{
+		OriginPostalCode:      req.OriginPostalCode,
+		DestinationPostalCode: req.DestinationPostalCode,
+		Couriers:              req.Couriers,
+		Items:                 items,
+	}
+
+	reqBody, err := json.Marshal(biteshipReq)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(reqBody))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Authorization", c.APIKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("biteship /v1/rates/couriers returned unexpected status %d", resp.StatusCode)
+	}
+
+	var body GetRatesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+
+	if !body.Success {
+		return nil, fmt.Errorf("biteship rates api returned error: %s", body.Message)
+	}
+
+	rates := make([]shipping.Rate, len(body.Pricing))
+	for i, r := range body.Pricing {
+		rates[i] = shipping.Rate{
+			CourierName:        r.CourierName,
+			CourierCode:        r.CourierCode,
+			CourierServiceName: r.CourierServiceName,
+			CourierServiceCode: r.CourierServiceCode,
+			Duration:           r.Duration,
+			Price:              r.Price,
+			Type:               r.Type,
+		}
+	}
+	return rates, nil
 }

@@ -45,3 +45,9 @@ func (c *cachedAggregator) GetCourierList(ctx context.Context) ([]Courier, error
 	c.expiresAt = time.Now().Add(courierCacheTTL)
 	return c.couriers, nil
 }
+
+// GetRates is not cached in a struct field because each request has a very low chance 
+// of being exactly the same (varying postal codes, items, weights, etc.), making caching ineffective.
+func (c *cachedAggregator) GetRates(ctx context.Context, req RateRequest) ([]Rate, error) {
+	return c.next.GetRates(ctx, req)
+}
