@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dengankarya/overwatch/internal/shipping"
+	"github.com/dengankarya/overwatch/internal/tracking"
 )
 
 type Client struct {
@@ -67,4 +68,67 @@ func (c *Client) GetCourierList(ctx context.Context) ([]shipping.Courier, error)
 		}
 	}
 	return couriers, nil
+}
+
+func (c *Client) GetPublicTracking(ctx context.Context, waybillID string, courierCode string) (tracking.PublicTracking, error) {
+	url := fmt.Sprintf("%s/v1/trackings/%s/couriers/%s", c.BaseURL, waybillID, courierCode)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return tracking.PublicTracking{}, err
+	}
+	req.Header.Set("Authorization", c.APIKey)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return tracking.PublicTracking{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return tracking.PublicTracking{}, fmt.Errorf("biteship /v1/trackings returned unexpected status %d", resp.StatusCode)
+	}
+
+	var body GetTrackingResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return tracking.PublicTracking{}, err
+	}
+	
+	if !body.Success {
+		return tracking.PublicTracking{}, fmt.Errorf("biteship tracking api returned error: %s", body.Message)
+	}
+
+	histories := make([]tracking.TrackingHistory, len(body.History))
+	for i, h := range body.History {
+		histories[i] = tracking.TrackingHistory{
+			Note:      h.Note,
+			UpdatedAt: h.UpdatedAt,
+			Status:    h.Status,
+		}
+	}
+
+	return tracking.PublicTracking{
+		ID:        body.ID,
+		WaybillID: body.WaybillID,
+		Courier: tracking.CourierInfo{
+			Company:           body.Courier.Company,
+			Name:              body.Courier.Name,
+			Phone:             body.Courier.Phone,
+			DriverName:        body.Courier.DriverName,
+			DriverPhone:       body.Courier.DriverPhone,
+			DriverPhotoURL:    body.Courier.DriverPhotoURL,
+			DriverPlateNumber: body.Courier.DriverPlateNumber,
+		},
+		Origin: tracking.LocationInfo{
+			ContactName: body.Origin.ContactName,
+			Address:     body.Origin.Address,
+		},
+		Destination: tracking.LocationInfo{
+			ContactName: body.Destination.ContactName,
+			Address:     body.Destination.Address,
+		},
+		History: histories,
+		Link:    body.Link,
+		OrderID: body.OrderID,
+		Status:  body.Status,
+	}, nil
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/dengankarya/overwatch/internal/payment"
 	"github.com/dengankarya/overwatch/internal/region"
 	"github.com/dengankarya/overwatch/internal/shipping"
+	"github.com/dengankarya/overwatch/internal/tracking"
 	"github.com/dengankarya/overwatch/internal/worker"
 	"github.com/dengankarya/overwatch/pkg/biteship"
 	"github.com/dengankarya/overwatch/pkg/tokokarya"
@@ -77,6 +78,9 @@ func main() {
 	cachedAggregator := shipping.NewCachedAggregator(biteshipClient)
 	shippingSvc := shipping.NewShippingService(cachedAggregator)
 	shipping.RegisterHandlers(app.Group("/api/shippings"), shippingSvc)
+
+	trackingSvc := tracking.NewTrackingService(biteshipClient)
+	tracking.RegisterHandlers(app.Group("/api/trackings"), trackingSvc)
 
 	wilayahClient := wilayah.NewClient(cfg.WilayahBaseURL)
 	cachedWilayah := region.NewCachedClient(wilayahClient)
