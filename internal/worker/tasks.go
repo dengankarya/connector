@@ -1,6 +1,6 @@
 package worker
 
-// Task type names — must match between enqueuer (payment/controller) and handler (worker).
+// Task type names — must match between enqueuer and handler.
 const TaskXenplatformAccountUpdated = "xenplatform:account_updated"
 
 // XenplatformAccountUpdatedPayload is the task payload stored in Redis.
@@ -10,3 +10,11 @@ type XenplatformAccountUpdatedPayload struct {
 	BusinessID string         `json:"business_id"`
 	Data       map[string]any `json:"data"`
 }
+
+// ── Payment module job task names ───────────────────────────────────────────
+
+// TaskExpirePayments is the periodic job that expires stale awaiting_payment transactions.
+const TaskExpirePayments = "payment:jobs:expire_payments"
+
+// TaskRetryWebhooks is the periodic job that replays failed webhook events.
+const TaskRetryWebhooks = "payment:jobs:retry_webhooks"

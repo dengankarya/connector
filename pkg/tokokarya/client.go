@@ -36,7 +36,17 @@ func (c *Client) UpdateAccountStatus(ctx context.Context, accountID, status stri
 	if err != nil {
 		return err
 	}
+	return c.postWebhook(ctx, body)
+}
 
+// ForwardWebhook forwards a raw Xendit payment webhook payload to Tokokarya.
+// The payload is sent as-is (no re-marshalling) so Tokokarya receives exactly
+// what Xendit sent.
+func (c *Client) ForwardWebhook(ctx context.Context, payload []byte) error {
+	return c.postWebhook(ctx, payload)
+}
+
+func (c *Client) postWebhook(ctx context.Context, body []byte) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/webhooks/xenplatform", bytes.NewReader(body))
 	if err != nil {
 		return err

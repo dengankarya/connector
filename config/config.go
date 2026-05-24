@@ -13,6 +13,8 @@ type Configuration struct {
 	PORT           string `env:"PORT"`
 	AllowedAPIKeys string `env:"ALLOWED_API_KEYS"`
 
+	DatabaseDSN string `env:"DATABASE_DSN"`
+
 	BiteshipAPIKey  string `env:"BITESHIP_API_KEY"`
 	BiteshipBaseURL string `env:"BITESHIP_BASE_URL"`
 
@@ -25,7 +27,7 @@ type Configuration struct {
 	TokokaryaURL    string `env:"TOKOKARYA_URL"`
 	TokokaryaAPIKey string `env:"TOKOKARYA_API_KEY"`
 
-	RedisAddr string `env:"REDIS_ADDR,notEmpty" envDefault:"localhost:6379"`
+	RedisURL string `env:"REDIS_URL,notEmpty" envDefault:"redis://localhost:6379"`
 }
 
 func (c Configuration) IsThisRequestAuthenticated(apiKey string) bool {

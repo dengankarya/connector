@@ -1,0 +1,364 @@
+// Package webhook handles inbound payment callbacks: ingestion, processing, replay, and retry.
+package webhook
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/sirupsen/logrus"
+	"github.com/dengankarya/overwatch/internal/payment/domain"
+	"github.com/dengankarya/overwatch/internal/payment/ledger"
+	"github.com/dengankarya/overwatch/internal/payment/provider"
+	"github.com/dengankarya/overwatch/internal/payment/repository"
+)
+
+// WebhookForwarder forwards the raw Xendit payload to an upstream app after processing.
+// pkg/tokokarya.Client satisfies this interface.
+type WebhookForwarder interface {
+	ForwardWebhook(ctx context.Context, payload []byte) error
+}
+
+// Processor orchestrates the full webhook processing pipeline.
+// Every step from lock → transition → ledger → mark-processed runs in one DB transaction.
+type Processor struct {
+	eventRepo *repository.WebhookEventRepository
+	txnRepo   *repository.TransactionRepository
+	ledger    *ledger.Service
+	txRunner  *repository.TxRunner
+	prov      provider.PaymentProvider
+	forwarder WebhookForwarder // optional; if nil forwarding is skipped
+	logger    *logrus.Logger
+}
+
+// NewProcessor creates a Processor with all required dependencies.
+// forwarder may be nil — forwarding is silently skipped when not configured.
+func NewProcessor(
+	eventRepo *repository.WebhookEventRepository,
+	txnRepo *repository.TransactionRepository,
+	ledgerSvc *ledger.Service,
+	txRunner *repository.TxRunner,
+	prov provider.PaymentProvider,
+	forwarder WebhookForwarder,
+	logger *logrus.Logger,
+) *Processor {
+	return &Processor{
+		eventRepo: eventRepo,
+		txnRepo:   txnRepo,
+		ledger:    ledgerSvc,
+		txRunner:  txRunner,
+		prov:      prov,
+		forwarder: forwarder,
+		logger:    logger,
+	}
+}
+
+// Ingest stores a raw webhook payload and returns the assigned event UUID.
+// It is safe to call multiple times with the same provider event ID (idempotent).
+// The heavy processing happens asynchronously — callers should return HTTP 200 immediately.
+func (p *Processor) Ingest(ctx context.Context, payload []byte, headers map[string]string, prov provider.PaymentProvider) (uuid.UUID, bool, error) {
+	log := p.logger.WithField("component", "webhook_ingest")
+
+	// Parse to extract the event type and invoice ID for the provider_event_id.
+	parsed, err := prov.ParseWebhookEvent(ctx, payload)
+	if err != nil {
+		return uuid.Nil, false, fmt.Errorf("ingest: parse payload: %w", err)
+	}
+
+	// Derive a stable, unique event identifier.
+	providerEventID := deriveEventID(headers, parsed.EventType, parsed.ProviderInvoiceID)
+
+	event := &domain.WebhookEvent{
+		Provider:           prov.ProviderName(),
+		ProviderEventID:    providerEventID,
+		EventType:          parsed.EventType,
+		RawPayload:         payload,
+		Headers:            headers,
+		Signature:          headers["x-callback-token"],
+		SignatureValid:     true, // already validated by controller before calling Ingest
+		ProcessingStatus:   domain.WebhookStatusReceived,
+		ProcessingAttempts: 0,
+	}
+
+	err = p.eventRepo.Create(ctx, event)
+	if errors.Is(err, domain.ErrDuplicateWebhookEvent) {
+		log.WithFields(logrus.Fields{
+			"provider":          prov.ProviderName(),
+			"provider_event_id": providerEventID,
+			"event_type":        parsed.EventType,
+		}).Warn("duplicate webhook event received — skipping enqueue")
+		return uuid.Nil, true, nil // already seen; caller should 200 immediately
+	}
+	if err != nil {
+		return uuid.Nil, false, fmt.Errorf("ingest: store event: %w", err)
+	}
+
+	log.WithFields(logrus.Fields{
+		"webhook_event_id":  event.ID,
+		"provider_event_id": providerEventID,
+		"event_type":        parsed.EventType,
+	}).Info("webhook event stored")
+
+	return event.ID, false, nil
+}
+
+// Process runs the full processing pipeline for a stored webhook event.
+// All DB mutations (status updates, transaction update, ledger inserts) are wrapped
+// in a single ACID transaction so there is no partial state on failure.
+//
+// After a successful commit the raw Xendit payload is forwarded to Tokokarya
+// asynchronously (fire-and-forget). Forward failures are logged but never
+// propagate back — they do not cause the task to be retried.
+//
+// Safe to call multiple times — idempotency is enforced at every step.
+func (p *Processor) Process(ctx context.Context, eventID uuid.UUID) error {
+	start := time.Now()
+	log := p.logger.WithFields(logrus.Fields{
+		"component":        "webhook_processor",
+		"webhook_event_id": eventID,
+	})
+
+	// rawPayload and didProcess are set inside the transaction and read after commit.
+	var rawPayload []byte
+	var didProcess bool
+
+	err := p.txRunner.RunInTx(ctx, func(txCtx context.Context) error {
+		// ── Step 1: Lock the webhook event row ──────────────────────────────
+		// SELECT FOR UPDATE prevents two workers from processing the same event.
+		event, err := p.eventRepo.GetByIDForUpdate(txCtx, eventID)
+		if err != nil {
+			return fmt.Errorf("lock webhook event: %w", err)
+		}
+
+		log = log.WithFields(logrus.Fields{
+			"event_type":        event.EventType,
+			"provider":          event.Provider,
+			"provider_event_id": event.ProviderEventID,
+		})
+
+		// ── Step 2: Idempotency check ────────────────────────────────────────
+		if event.ProcessingStatus == domain.WebhookStatusProcessed {
+			log.Info("webhook already processed — skipping (idempotent)")
+			return nil
+		}
+
+		// ── Step 3: Increment attempts + mark processing ─────────────────────
+		if err := p.eventRepo.IncrementAttempts(txCtx, eventID); err != nil {
+			return fmt.Errorf("increment attempts: %w", err)
+		}
+		if err := p.eventRepo.UpdateStatus(txCtx, eventID, domain.WebhookStatusProcessing, ""); err != nil {
+			return fmt.Errorf("mark processing: %w", err)
+		}
+
+		log.WithField("attempt", event.ProcessingAttempts+1).Info("processing webhook event")
+
+		// ── Step 4: Find and lock the payment transaction ─────────────────────
+		invoiceID := extractInvoiceID(event)
+		txn, err := p.txnRepo.GetByProviderInvoiceIDForUpdate(txCtx, event.Provider, invoiceID)
+		if err != nil {
+			_ = p.eventRepo.UpdateStatus(txCtx, eventID, domain.WebhookStatusFailed, err.Error())
+			return fmt.Errorf("lock transaction for invoice %q: %w", invoiceID, err)
+		}
+
+		log = log.WithFields(logrus.Fields{
+			"transaction_id":      txn.ID,
+			"tenant_id":           txn.TenantID,
+			"provider_invoice_id": invoiceID,
+			"current_status":      txn.Status,
+		})
+
+		// ── Step 5: Handle the event (transition + ledger) ───────────────────
+		if err := p.handle(txCtx, event, txn, log); err != nil {
+			_ = p.eventRepo.UpdateStatus(txCtx, eventID, domain.WebhookStatusFailed, err.Error())
+			return err
+		}
+
+		// ── Step 6: Mark event as processed and link to transaction ──────────
+		if err := p.eventRepo.MarkProcessed(txCtx, eventID, txn.ID); err != nil {
+			return fmt.Errorf("mark processed: %w", err)
+		}
+
+		rawPayload = event.RawPayload
+		didProcess = true
+
+		log.WithField("duration_ms", time.Since(start).Milliseconds()).
+			Info("webhook event processed successfully")
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	// ── Step 7: Forward raw payload to Tokokarya (post-commit, async) ────────
+	// Done outside the DB transaction so a Tokokarya outage never rolls back the
+	// payment state. Runs in a goroutine with its own timeout — task context may
+	// already be cancelled by the time we get here.
+	if didProcess && p.forwarder != nil {
+		go func() {
+			fwdCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := p.forwarder.ForwardWebhook(fwdCtx, rawPayload); err != nil {
+				p.logger.WithFields(logrus.Fields{
+					"component":        "webhook_processor",
+					"webhook_event_id": eventID,
+				}).WithError(err).Warn("forward webhook to tokokarya failed — payment state is committed")
+			}
+		}()
+	}
+
+	return nil
+}
+
+// handle routes the event to the appropriate handler based on EventType.
+//
+// Xendit Sessions API events (primary — fired by POST /sessions):
+//   - payment_session.completed → payment captured via hosted checkout
+//   - payment_session.expired   → session timed out before payment
+//   - payment_session.failed    → session payment failed
+//
+// Xendit Payment Request API events (kept for compatibility):
+//   - payment.capture           → payment captured
+//   - payment.authorization     → authorised pending capture; no-op for AUTOMATIC
+//   - payment.failure           → failed/expired (distinguished by failure_code)
+func (p *Processor) handle(ctx context.Context, event *domain.WebhookEvent, txn *domain.PaymentTransaction, log *logrus.Entry) error {
+	switch event.EventType {
+	// ── Sessions API ────────────────────────────────────────────────────────
+	case "payment_session.completed":
+		return p.handlePaid(ctx, event, txn, log)
+	case "payment_session.expired":
+		return p.handleExpired(ctx, event, txn, log)
+	case "payment_session.failed":
+		details := parsePaymentDetails(event.RawPayload)
+		return p.handleFailed(ctx, event, txn, log, details.FailureCode)
+
+	// ── Payment Request API (compatibility) ─────────────────────────────────
+	case "payment.capture":
+		return p.handlePaid(ctx, event, txn, log)
+	case "payment.authorization":
+		log.Info("payment authorised — no action required for automatic capture")
+		return nil
+	case "payment.failure":
+		details := parsePaymentDetails(event.RawPayload)
+		if details.FailureCode == "PAYMENT_REQUEST_EXPIRED" {
+			return p.handleExpired(ctx, event, txn, log)
+		}
+		return p.handleFailed(ctx, event, txn, log, details.FailureCode)
+
+	default:
+		log.WithField("event_type", event.EventType).Warn("unhandled webhook event type — marking processed without action")
+		return nil
+	}
+}
+
+func (p *Processor) handlePaid(ctx context.Context, event *domain.WebhookEvent, txn *domain.PaymentTransaction, log *logrus.Entry) error {
+	prevStatus := txn.Status
+
+	if err := txn.TransitionTo(domain.StatusPaid); err != nil {
+		if errors.As(err, new(domain.ErrAlreadyInState)) {
+			log.WithField("status", txn.Status).Info("transaction already paid — idempotent")
+			return nil
+		}
+		return fmt.Errorf("transition to paid: %w", err)
+	}
+
+	// Capture payment details from the parsed webhook payload.
+	details := parsePaymentDetails(event.RawPayload)
+	now := time.Now().UTC()
+	txn.PaidAt = &now
+	if details.ChannelCode != "" {
+		txn.PaymentMethod = details.ChannelCode
+		txn.PaymentChannel = details.ChannelCode
+	}
+	if details.PaymentID != "" {
+		txn.ProviderPaymentID = details.PaymentID
+	}
+
+	if err := p.txnRepo.Update(ctx, txn); err != nil {
+		return fmt.Errorf("update transaction to paid: %w", err)
+	}
+
+	if err := p.ledger.RecordPayment(ctx, txn, event.ID); err != nil {
+		return fmt.Errorf("record payment ledger: %w", err)
+	}
+
+	log.WithFields(logrus.Fields{
+		"prev_status":         prevStatus,
+		"status":              txn.Status,
+		"amount":              txn.Amount,
+		"currency":            txn.Currency,
+		"channel_code":        txn.PaymentMethod,
+		"provider_payment_id": txn.ProviderPaymentID,
+	}).Info("transaction marked paid, ledger updated")
+	return nil
+}
+
+func (p *Processor) handleExpired(ctx context.Context, _ *domain.WebhookEvent, txn *domain.PaymentTransaction, log *logrus.Entry) error {
+	if err := txn.TransitionTo(domain.StatusExpired); err != nil {
+		if errors.As(err, new(domain.ErrAlreadyInState)) {
+			log.Info("transaction already expired — idempotent")
+			return nil
+		}
+		return fmt.Errorf("transition to expired: %w", err)
+	}
+
+	if err := p.txnRepo.Update(ctx, txn); err != nil {
+		return fmt.Errorf("update transaction to expired: %w", err)
+	}
+
+	log.WithField("status", txn.Status).Info("transaction marked expired")
+	return nil
+}
+
+func (p *Processor) handleFailed(ctx context.Context, _ *domain.WebhookEvent, txn *domain.PaymentTransaction, log *logrus.Entry, failureCode string) error {
+	if err := txn.TransitionTo(domain.StatusFailed); err != nil {
+		if errors.As(err, new(domain.ErrAlreadyInState)) {
+			log.Info("transaction already failed — idempotent")
+			return nil
+		}
+		return fmt.Errorf("transition to failed: %w", err)
+	}
+
+	if err := p.txnRepo.Update(ctx, txn); err != nil {
+		return fmt.Errorf("update transaction to failed: %w", err)
+	}
+
+	log.WithFields(logrus.Fields{
+		"status":       txn.Status,
+		"failure_code": failureCode,
+	}).Info("transaction marked failed")
+	return nil
+}
+
+// TODO: triggerTransfer — route merchant_amount to the merchant's Xendit sub-account
+// after settlement. To be implemented when the settlement flow is finalised.
+// The provider.Transfer method and TransferRequest type are already defined in provider/interface.go.
+
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
+func extractInvoiceID(event *domain.WebhookEvent) string {
+	// Prefer extracting payment_session_id directly from the raw webhook payload —
+	// this is what we store as ProviderInvoiceID when the session is created.
+	details := parsePaymentDetails(event.RawPayload)
+	if details.PaymentSessionID != "" {
+		return details.PaymentSessionID
+	}
+	// Fallback: extract from composite ProviderEventID ("event_type:session_id").
+	for i := len(event.ProviderEventID) - 1; i >= 0; i-- {
+		if event.ProviderEventID[i] == ':' {
+			return event.ProviderEventID[i+1:]
+		}
+	}
+	return ""
+}
+
+func deriveEventID(headers map[string]string, eventType, invoiceID string) string {
+	if id := headers["webhook-id"]; id != "" {
+		return id
+	}
+	if id := headers["x-webhook-id"]; id != "" {
+		return id
+	}
+	return eventType + ":" + invoiceID
+}

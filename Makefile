@@ -4,4 +4,4 @@ run:
 	go run http/*.go
 
 docker-build:
-	docker build -t connectoe .
+	docker build -t connector .
