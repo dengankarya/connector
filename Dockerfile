@@ -22,11 +22,14 @@ FROM alpine:3.21
 
 RUN apk add --no-cache curl
 
-COPY --from=builder /app/service /service
+WORKDIR /app
+
+COPY --from=builder /app/service /app/service
+COPY --from=builder /app/db/migrations /app/db/migrations
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=60s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -sf http://localhost:8000/health || exit 1
 
-ENTRYPOINT ["/service"]
+ENTRYPOINT ["/app/service"]
