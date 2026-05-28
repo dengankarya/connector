@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/hmac"
 
-	"github.com/dengankarya/overwatch/internal/payment/domain"
+	"github.com/dengankarya/connector/internal/payment/domain"
 )
 
 // ValidateWebhookSignature checks the x-callback-token header against the configured secret.

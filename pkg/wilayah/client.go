@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/dengankarya/overwatch/internal/region"
+	"github.com/dengankarya/connector/internal/region"
 )
 
 type Client struct {

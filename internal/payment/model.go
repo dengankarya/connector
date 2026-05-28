@@ -1,29 +1,42 @@
 package payment
 
-type PublicProfile struct {
-	BusinessName string `json:"business_name,omitempty"`
+// CreatePaymentBody is the request body for POST /payments.
+type CreatePaymentBody struct {
+	OrderNumber            string         `json:"order_number"`
+	IdempotencyKey         string         `json:"idempotency_key"`
+	Amount                 int64          `json:"amount"`
+	Currency               string         `json:"currency"`
+	PlatformFee            int64          `json:"platform_fee"`
+	AllowedPaymentChannels []string       `json:"allowed_payment_channels"`
+	SuccessReturnURL       string         `json:"success_return_url"`
+	CancelReturnURL        string         `json:"cancel_return_url"`
+	Description            string         `json:"description"`
+	CustomerEmail          string         `json:"customer_email"`
+	CustomerName           string         `json:"customer_name"`
+	CustomerReferenceID    string         `json:"customer_reference_id"`
+	Metadata               map[string]any `json:"metadata"`
 }
 
-type Account struct {
-	ID            string        `json:"id"`
-	Email         string        `json:"email"`
-	Type          string        `json:"type"`
-	PublicProfile PublicProfile `json:"public_profile"`
-	Status        string        `json:"status"`
-	Country       string        `json:"country"`
-	Created       string        `json:"created"`
-	Updated       string        `json:"updated"`
+// CreateManualPaymentBody is the request body for POST /payments/manual.
+type CreateManualPaymentBody struct {
+	OrderNumber    string         `json:"order_number"`
+	IdempotencyKey string         `json:"idempotency_key"`
+	Amount         int64          `json:"amount"`
+	Currency       string         `json:"currency"`
+	PlatformFee    int64          `json:"platform_fee"`
+	ShippingFee    int64          `json:"shipping_fee"`
+	PaymentMethod  string         `json:"payment_method"`
+	PaymentChannel string         `json:"payment_channel"`
+	Description    string         `json:"description"`
+	Metadata       map[string]any `json:"metadata"`
 }
 
-type CreateAccountRequest struct {
-	Email         string        `json:"email"`
-	Type          string        `json:"type"`
-	PublicProfile PublicProfile `json:"public_profile"`
+// ReplayWebhookBody is the request body for POST /payments/webhooks/{event_id}/replay.
+type ReplayWebhookBody struct {
+	Force bool `json:"force"`
 }
 
-type WebhookEvent struct {
-	Event      string `json:"event"`
-	BusinessID string `json:"business_id"`
-	Created    string `json:"created"`
-	Data       any    `json:"data"`
+// ConfirmManualPaymentBody is the request body for POST /payments/manual/{id}/confirm.
+type ConfirmManualPaymentBody struct {
+	PaymentChannel string `json:"payment_channel"`
 }

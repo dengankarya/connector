@@ -41,16 +41,18 @@ func (e ErrLedgerImbalance) Error() string {
 	return fmt.Sprintf("ledger imbalance: debit=%d credit=%d diff=%d", e.Debit, e.Credit, e.Debit-e.Credit)
 }
 
-// ErrAmountMismatch is returned when amount != merchant_amount + platform_fee.
+// ErrAmountMismatch is returned when amount != merchant_amount + platform_fee + shipping_fee.
 type ErrAmountMismatch struct {
 	Amount         int64
 	MerchantAmount int64
 	PlatformFee    int64
+	ShippingFee    int64
 }
 
 func (e ErrAmountMismatch) Error() string {
-	return fmt.Sprintf("amount mismatch: amount=%d merchant_amount=%d platform_fee=%d sum=%d",
-		e.Amount, e.MerchantAmount, e.PlatformFee, e.MerchantAmount+e.PlatformFee)
+	return fmt.Sprintf("amount mismatch: amount=%d merchant_amount=%d platform_fee=%d shipping_fee=%d sum=%d",
+		e.Amount, e.MerchantAmount, e.PlatformFee, e.ShippingFee,
+		e.MerchantAmount+e.PlatformFee+e.ShippingFee)
 }
 
 // Sentinel errors — compared with errors.Is.

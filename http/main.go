@@ -13,50 +13,70 @@ import (
 	"github.com/hibiken/asynq"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/dengankarya/overwatch/common"
-	"github.com/dengankarya/overwatch/config"
-	"github.com/dengankarya/overwatch/internal/payment"
-	"github.com/dengankarya/overwatch/internal/payment/jobs"
-	"github.com/dengankarya/overwatch/internal/payment/ledger"
-	"github.com/dengankarya/overwatch/internal/payment/provider/xendit"
-	"github.com/dengankarya/overwatch/internal/payment/repository"
-	paymentservice "github.com/dengankarya/overwatch/internal/payment/service"
-	"github.com/dengankarya/overwatch/internal/payment/webhook"
-	"github.com/dengankarya/overwatch/internal/region"
-	"github.com/dengankarya/overwatch/internal/shipping"
-	"github.com/dengankarya/overwatch/internal/worker"
-	"github.com/dengankarya/overwatch/pkg/biteship"
-	"github.com/dengankarya/overwatch/pkg/dbconn"
-	"github.com/dengankarya/overwatch/pkg/tokokarya"
-	"github.com/dengankarya/overwatch/pkg/wilayah"
-	"github.com/dengankarya/overwatch/pkg/xenplatform"
+	"github.com/dengankarya/connector/common"
+	"github.com/dengankarya/connector/config"
+	"github.com/dengankarya/connector/internal/account"
+	"github.com/dengankarya/connector/internal/payment"
+	"github.com/dengankarya/connector/internal/payment/jobs"
+	"github.com/dengankarya/connector/internal/payment/ledger"
+	"github.com/dengankarya/connector/internal/payment/provider/xendit"
+	"github.com/dengankarya/connector/internal/payment/repository"
+	paymentservice "github.com/dengankarya/connector/internal/payment/service"
+	"github.com/dengankarya/connector/internal/payment/webhook"
+	"github.com/dengankarya/connector/internal/region"
+	"github.com/dengankarya/connector/internal/shipping"
+	shipmentrepo "github.com/dengankarya/connector/internal/shipping/repository"
+	"github.com/dengankarya/connector/internal/worker"
+	"github.com/dengankarya/connector/pkg/biteship"
+	"github.com/dengankarya/connector/pkg/dbconn"
+	"github.com/dengankarya/connector/pkg/tokokarya"
+	"github.com/dengankarya/connector/pkg/wilayah"
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 )
 
 const shutdownTimeout = 30 * time.Second
 
+//	@title			Connector API Docs
+//	@version		1.0
+//	@description	This is the API documentation for the Connector service, which handles any kind of external integrations for Dengankarya.
+
+//	@contact.name	Dengan Karya Support
+//	@contact.url	https://dengankarya.com/contact
+//	@contact.email	dukungan@dengankarya.com
+
+//	@BasePath	/api/v1
+//	@accept		json
+//	@produce	json
+//	@schemes	http https
+
+//	@securityDefinitions.apikey	ApiKeyAuth
+//	@in							header
+//	@name						X-API-KEY
+
+// @externalDocs.description	OpenAPI
+// @externalDocs.url			https://swagger.io/resources/open-api/
 func main() {
 	log.SetFormatter(&log.JSONFormatter{})
 	log.Info("starting overwatch http handler...")
 
 	cfg := config.ParseENV()
 
-	// ── Tokokarya client — initialised early so the DB block can reference it ──
-	// Satisfies both worker.TokokaryaNotifier (account updates) and
-	// webhook.WebhookForwarder (payment webhook forwarding).
+	// ── Tokokarya client — payment webhook forwarding ────────────────────────
 	var tokokaryaClient *tokokarya.Client
-	var tokokaryaNotifier worker.TokokaryaNotifier
 	if cfg.TokokaryaURL != "" && cfg.TokokaryaAPIKey != "" {
 		tokokaryaClient = tokokarya.NewClient(cfg.TokokaryaURL, cfg.TokokaryaAPIKey)
-		tokokaryaNotifier = tokokaryaClient
 	}
 
-	// ── PostgreSQL (pgx pool for payment module) ────────────────────────────
+	// ── PostgreSQL ──────────────────────────────────────────────────────────
 	var (
 		txnRepo        *repository.TransactionRepository
 		eventRepo      *repository.WebhookEventRepository
 		ledgerRepo     *repository.LedgerRepository
 		payoutRepo     *repository.PayoutRepository
 		txRunner       *repository.TxRunner
+		snapshotRepo   *repository.SettlementSnapshotRepository
 		ledgerSvc      *ledger.Service
 		webhookProc    *webhook.Processor
 		webhookHandler *webhook.AsynqHandler
@@ -64,11 +84,16 @@ func main() {
 		paymentSvc     *paymentservice.PaymentService
 		expireJob      *jobs.ExpirePaymentsJob
 		retryJob       *jobs.RetryWebhooksJob
+		syncJob        *jobs.SyncSettlementJob
+		shipmentRepo   *shipmentrepo.ShipmentRepository
+		balanceSvc     *account.Service
 	)
 
 	var requestLogRepo *repository.WebhookRequestLogRepository
 
 	if cfg.DatabaseDSN != "" {
+		runMigrations(cfg.DatabaseDSN)
+
 		pool, err := dbconn.ConnectPgx(cfg.DatabaseDSN)
 		if err != nil {
 			log.WithError(err).Fatal("failed to connect to postgres")
@@ -81,24 +106,29 @@ func main() {
 		ledgerRepo = repository.NewLedgerRepository(pool)
 		payoutRepo = repository.NewPayoutRepository(pool)
 		txRunner = repository.NewTxRunner(pool)
+		snapshotRepo = repository.NewSettlementSnapshotRepository(pool)
 		requestLogRepo = repository.NewWebhookRequestLogRepository(pool)
+		shipmentRepo = shipmentrepo.NewShipmentRepository(pool)
+		balanceRepo := account.NewRepository(pool)
 
 		// Business layer
 		ledgerSvc = ledger.New(ledgerRepo, log.StandardLogger())
+		balanceSvc = account.NewService(balanceRepo, txRunner, log.StandardLogger())
 
 		xenditProv := xendit.New(cfg.XenditAPIKey, cfg.XenditWebhookToken, cfg.XenditBaseURL)
 
-		webhookProc = webhook.NewProcessor(eventRepo, txnRepo, ledgerSvc, txRunner, xenditProv, tokokaryaClient, log.StandardLogger())
+		webhookProc = webhook.NewProcessor(eventRepo, txnRepo, ledgerSvc, txRunner, xenditProv, tokokaryaClient, balanceSvc, log.StandardLogger())
 		webhookHandler = webhook.NewAsynqHandler(webhookProc, log.StandardLogger())
 
 		// Asynq client needed for ReplayService — created before the section below.
 		_ = payoutRepo // used by PayoutService; wired separately if needed
 
-		paymentSvc = paymentservice.NewPaymentService(txnRepo, xenditProv, txRunner, log.StandardLogger())
+		paymentSvc = paymentservice.NewPaymentService(txnRepo, xenditProv, txRunner, snapshotRepo, ledgerSvc, balanceSvc, log.StandardLogger())
 
 		// Jobs
 		expireJob = jobs.NewExpirePaymentsJob(txnRepo, txRunner, log.StandardLogger())
 		retryJob = jobs.NewRetryWebhooksJob(nil, log.StandardLogger()) // replay wired after enqueuer init below
+		syncJob = jobs.NewSyncSettlementJob(txnRepo, snapshotRepo, xenditProv, log.StandardLogger())
 		_ = expireJob
 		_ = retryJob
 	}
@@ -119,7 +149,6 @@ func main() {
 
 	workerServer := worker.NewServer(cfg.RedisURL)
 	workerMux := worker.NewMux(worker.MuxOptions{
-		TokokaryaNotifier:   tokokaryaNotifier,
 		WebhookEventHandler: webhookHandler, // nil-safe: NewMux checks for nil
 	})
 	go func() {
@@ -133,6 +162,7 @@ func main() {
 		scheduler := asynq.NewScheduler(redisOpt, nil)
 		_, _ = scheduler.Register("*/5 * * * *", asynq.NewTask(worker.TaskExpirePayments, nil))
 		_, _ = scheduler.Register("*/10 * * * *", asynq.NewTask(worker.TaskRetryWebhooks, nil))
+		_, _ = scheduler.Register("0 18 * * *", asynq.NewTask(worker.TaskSyncSettlement, nil)) // 01:00 WIB
 
 		// Register job handlers on the worker mux.
 		workerMux.HandleFunc(worker.TaskExpirePayments, func(ctx context.Context, t *asynq.Task) error {
@@ -140,6 +170,9 @@ func main() {
 		})
 		workerMux.HandleFunc(worker.TaskRetryWebhooks, func(ctx context.Context, t *asynq.Task) error {
 			return retryJob.Run(ctx)
+		})
+		workerMux.HandleFunc(worker.TaskSyncSettlement, func(ctx context.Context, t *asynq.Task) error {
+			return syncJob.Run(ctx)
 		})
 
 		go func() {
@@ -151,8 +184,10 @@ func main() {
 
 	// ── HTTP server ─────────────────────────────────────────────────────────
 	app := fiber.New()
+	app.Get("/swagger/*", basicAuth(cfg.SwaggerUsername, cfg.SwaggerPassword), serveSwaggerUI)
 	app.Use(cors.New(cors.ConfigDefault))
 	app.Use(requestLogger())
+	apiRootGroup := app.Group("/api/v1")
 
 	app.Get("/", func(c fiber.Ctx) error {
 		return c.Status(http.StatusOK).JSON(common.Response{Status: http.StatusText(http.StatusOK)})
@@ -160,16 +195,13 @@ func main() {
 
 	registerHealthHandler(app)
 
-	// ── Xendit webhook — public, no API key check ───────────────────────────
-	xenplatformClient := xenplatform.NewClient(cfg.XenditAPIKey, cfg.XenditBaseURL)
-	legacyPaymentSvc := payment.NewPaymentService(xenplatformClient)
+	// ── Biteship webhook — public, no API key check ─────────────────────────
+	shipping.RegisterWebhookHandler(apiRootGroup, cfg.BiteshipWebhookSignatureKey, cfg.BiteshipWebhookSignatureValue, shipmentRepo, tokokaryaClient, log.StandardLogger())
 
+	// ── Xendit webhook — public, no API key check ───────────────────────────
 	if cfg.DatabaseDSN != "" {
 		xenditProv := xendit.New(cfg.XenditAPIKey, cfg.XenditWebhookToken, cfg.XenditBaseURL)
-		payment.RegisterWebhookHandlerV2(app, legacyPaymentSvc, cfg.XenditWebhookToken, asynqClient, webhookProc, xenditProv, requestLogRepo)
-	} else {
-		// Fall back to legacy handler when database is not configured.
-		payment.RegisterWebhookHandler(app, legacyPaymentSvc, cfg.XenditWebhookToken, asynqClient)
+		payment.RegisterWebhookHandlerV2(apiRootGroup, cfg.XenditWebhookToken, asynqClient, webhookProc, xenditProv, requestLogRepo)
 	}
 
 	// ── Authenticated routes ─────────────────────────────────────────────────
@@ -177,21 +209,22 @@ func main() {
 
 	biteshipClient := biteship.NewClient(cfg.BiteshipAPIKey, cfg.BiteshipBaseURL)
 	cachedAggregator := shipping.NewCachedAggregator(biteshipClient)
-	shippingSvc := shipping.NewShippingService(cachedAggregator)
-	shipping.RegisterHandlers(app.Group("/api/shippings"), shippingSvc)
+	shippingSvc := shipping.NewShippingService(cachedAggregator, biteshipClient, shipmentRepo)
+	shipping.RegisterHandlers(apiRootGroup.Group("/shipments"), shippingSvc)
+
+	if balanceSvc != nil {
+		account.RegisterHandlers(apiRootGroup.Group("/accounts"), balanceSvc)
+	}
 
 	wilayahClient := wilayah.NewClient(cfg.WilayahBaseURL)
 	cachedWilayah := region.NewCachedClient(wilayahClient)
 	regionSvc := region.NewRegionService(cachedWilayah)
-	region.RegisterHandlers(app.Group("/api/regions"), regionSvc)
+	region.RegisterHandlers(apiRootGroup.Group("/regions"), regionSvc)
 
-	// XenPlatform account endpoints (existing).
-	payment.RegisterHandlers(app.Group("/api/payments"), legacyPaymentSvc)
-
-	// New payment module endpoints (requires DB).
+	// Payment module endpoints (requires DB).
 	if paymentSvc != nil {
 		payment.RegisterPaymentHandlers(
-			app.Group("/api/payments"),
+			apiRootGroup.Group("/payments"),
 			paymentSvc,
 			replaySvc,
 			log.StandardLogger(),
@@ -220,4 +253,33 @@ func main() {
 	workerServer.Shutdown()
 
 	log.Info("server stopped gracefully")
+}
+
+// runMigrations applies all pending migrations from db/migrations/.
+// It is called at startup before any repositories are initialised.
+// The binary must be run from the project root so that the relative
+// path "db/migrations" resolves correctly (true for both `make run`
+// and the Docker image whose WORKDIR is set to the project root).
+func runMigrations(dsn string) {
+	log.Info("running database migrations...")
+	m, err := migrate.New("file://db/migrations", dsn)
+	if err != nil {
+		log.WithError(err).Fatal("migrate: failed to initialise")
+	}
+	defer func() {
+		srcErr, dbErr := m.Close()
+		if srcErr != nil {
+			log.WithError(srcErr).Warn("migrate: source close error")
+		}
+		if dbErr != nil {
+			log.WithError(dbErr).Warn("migrate: db close error")
+		}
+	}()
+
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		log.WithError(err).Fatal("migrate: up failed")
+	}
+
+	v, _, _ := m.Version()
+	log.WithField("version", v).Info("migrate: schema up to date")
 }

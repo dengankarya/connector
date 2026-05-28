@@ -7,12 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dengankarya/connector/internal/payment/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/dengankarya/overwatch/internal/payment/domain"
 )
-
 
 // TransactionRepository manages payment_transactions rows.
 type TransactionRepository struct {
@@ -39,16 +38,16 @@ func (r *TransactionRepository) Create(ctx context.Context, txn *domain.PaymentT
 	q := `
 		INSERT INTO payment_transactions (
 			id, tenant_id, order_number, idempotency_key,
-			provider, provider_invoice_id, provider_payment_id, checkout_url, xendit_account_id,
+			provider, provider_invoice_id, provider_payment_id, checkout_url,
 			payment_method, payment_channel,
-			amount, currency, platform_fee, merchant_amount,
+			amount, currency, platform_fee, shipping_fee, merchant_amount,
 			status, description, metadata,
 			expires_at, created_at, updated_at, version
 		) VALUES (
 			$1, $2, $3, $4,
-			$5, $6, $7, $8, $9,
-			$10, $11,
-			$12, $13, $14, $15,
+			$5, $6, $7, $8,
+			$9, $10,
+			$11, $12, $13, $14, $15,
 			$16, $17, $18::jsonb,
 			$19, $20, $21, $22
 		)
@@ -56,9 +55,9 @@ func (r *TransactionRepository) Create(ctx context.Context, txn *domain.PaymentT
 
 	tag, err := dbFromContext(ctx, r.pool).Exec(ctx, q,
 		txn.ID, txn.TenantID, nilIfEmpty(txn.OrderNumber), txn.IdempotencyKey,
-		txn.Provider, nilIfEmpty(txn.ProviderInvoiceID), nilIfEmpty(txn.ProviderPaymentID), nilIfEmpty(txn.CheckoutURL), nilIfEmpty(txn.XenditAccountID),
+		txn.Provider, nilIfEmpty(txn.ProviderInvoiceID), nilIfEmpty(txn.ProviderPaymentID), nilIfEmpty(txn.CheckoutURL),
 		nilIfEmpty(txn.PaymentMethod), nilIfEmpty(txn.PaymentChannel),
-		txn.Amount, txn.Currency, txn.PlatformFee, txn.MerchantAmount,
+		txn.Amount, txn.Currency, txn.PlatformFee, txn.ShippingFee, txn.MerchantAmount,
 		string(txn.Status), nilIfEmpty(txn.Description), jsonParam(metaJSON, metaValid),
 		txn.ExpiresAt, txn.CreatedAt, txn.UpdatedAt, txn.Version,
 	)
@@ -100,6 +99,15 @@ func (r *TransactionRepository) GetByProviderInvoiceIDForUpdate(ctx context.Cont
 	return scanTransaction(row)
 }
 
+// GetByProviderInvoiceID fetches a transaction by provider + invoice ID without a row lock.
+// Use GetByProviderInvoiceIDForUpdate inside a transaction when mutation follows.
+func (r *TransactionRepository) GetByProviderInvoiceID(ctx context.Context, prov, invoiceID string) (*domain.PaymentTransaction, error) {
+	row := dbFromContext(ctx, r.pool).QueryRow(ctx,
+		`SELECT `+txnColumns+` FROM payment_transactions WHERE provider = $1 AND provider_invoice_id = $2`,
+		prov, invoiceID)
+	return scanTransaction(row)
+}
+
 // Update persists all mutable fields and enforces the optimistic lock version.
 // Returns domain.ErrVersionConflict if the row was concurrently modified.
 func (r *TransactionRepository) Update(ctx context.Context, txn *domain.PaymentTransaction) error {
@@ -108,19 +116,24 @@ func (r *TransactionRepository) Update(ctx context.Context, txn *domain.PaymentT
 
 	q := `
 		UPDATE payment_transactions SET
-			provider_invoice_id = $1,
-			provider_payment_id = $2,
-			payment_method      = $3,
-			payment_channel     = $4,
-			status              = $5,
-			description         = $6,
-			metadata            = $7::jsonb,
-			expires_at          = $8,
-			paid_at             = $9,
-			settled_at          = $10,
-			updated_at          = $11,
-			version             = $12
-		WHERE id = $13 AND version = $14`
+			provider_invoice_id       = $1,
+			provider_payment_id       = $2,
+			payment_method            = $3,
+			payment_channel           = $4,
+			status                    = $5,
+			description               = $6,
+			metadata                  = $7::jsonb,
+			expires_at                = $8,
+			paid_at                   = $9,
+			settled_at                = $10,
+			xendit_fee                = $11,
+			vat                       = $12,
+			xendit_withholding_tax    = $13,
+			third_party_wht           = $14,
+			estimated_settlement_time = $15,
+			updated_at                = $16,
+			version                   = $17
+		WHERE id = $18 AND version = $19`
 
 	tag, err := dbFromContext(ctx, r.pool).Exec(ctx, q,
 		nilIfEmpty(txn.ProviderInvoiceID),
@@ -133,8 +146,13 @@ func (r *TransactionRepository) Update(ctx context.Context, txn *domain.PaymentT
 		txn.ExpiresAt,
 		txn.PaidAt,
 		txn.SettledAt,
+		txn.XenditFee,
+		txn.VAT,
+		txn.XenditWithholdingTax,
+		txn.ThirdPartyWHT,
+		txn.EstimatedSettlementTime,
 		txn.UpdatedAt,
-		txn.Version,   // new version (already incremented by TransitionTo)
+		txn.Version, // new version (already incremented by TransitionTo)
 		txn.ID,
 		txn.Version-1, // expected old version
 	)
@@ -147,6 +165,76 @@ func (r *TransactionRepository) Update(ctx context.Context, txn *domain.PaymentT
 	return nil
 }
 
+// ListDistinctTenants returns all unique tenant_ids that have payment transactions.
+// Used by the settlement sync job to know which tenants to snapshot.
+func (r *TransactionRepository) ListDistinctTenants(ctx context.Context) ([]int64, error) {
+	rows, err := dbFromContext(ctx, r.pool).Query(ctx, `
+		SELECT DISTINCT tenant_id FROM payment_transactions ORDER BY tenant_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list distinct tenants: %w", err)
+	}
+	defer rows.Close()
+
+	var result []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan tenant id: %w", err)
+		}
+		result = append(result, id)
+	}
+	return result, rows.Err()
+}
+
+// PendingSettlementSums holds aggregate totals for all paid-but-not-settled transactions.
+type PendingSettlementSums struct {
+	MerchantAmount int64 // SUM(merchant_amount) — net amount merchant will receive
+	PlatformFee    int64 // SUM(platform_fee)
+	XenditFee      int64 // SUM(xendit_fee)
+	VAT            int64 // SUM(vat)
+	Withholding    int64 // SUM(xendit_withholding_tax + third_party_wht)
+}
+
+// SumPendingSettlement aggregates all paid-but-not-settled transactions for a tenant.
+// "Pending" means status = 'paid' — money collected from customer but not yet marked settled by Xendit.
+func (r *TransactionRepository) SumPendingSettlement(ctx context.Context, tenantID int64) (*PendingSettlementSums, error) {
+	var s PendingSettlementSums
+	err := dbFromContext(ctx, r.pool).QueryRow(ctx, `
+		SELECT
+			COALESCE(SUM(merchant_amount), 0),
+			COALESCE(SUM(platform_fee), 0),
+			COALESCE(SUM(xendit_fee), 0),
+			COALESCE(SUM(vat), 0),
+			COALESCE(SUM(xendit_withholding_tax + third_party_wht), 0)
+		FROM payment_transactions
+		WHERE tenant_id = $1 AND status = 'paid'`, tenantID).
+		Scan(&s.MerchantAmount, &s.PlatformFee, &s.XenditFee, &s.VAT, &s.Withholding)
+	if err != nil {
+		return nil, fmt.Errorf("sum pending settlement for tenant %d: %w", tenantID, err)
+	}
+	return &s, nil
+}
+
+// SumSettled aggregates all settled transactions for a tenant.
+// "Settled" means status = 'settled' — Xendit has confirmed funds landed in the platform master account.
+func (r *TransactionRepository) SumSettled(ctx context.Context, tenantID int64) (*PendingSettlementSums, error) {
+	var s PendingSettlementSums
+	err := dbFromContext(ctx, r.pool).QueryRow(ctx, `
+		SELECT
+			COALESCE(SUM(merchant_amount), 0),
+			COALESCE(SUM(platform_fee), 0),
+			COALESCE(SUM(xendit_fee), 0),
+			COALESCE(SUM(vat), 0),
+			COALESCE(SUM(xendit_withholding_tax + third_party_wht), 0)
+		FROM payment_transactions
+		WHERE tenant_id = $1 AND status = 'settled'`, tenantID).
+		Scan(&s.MerchantAmount, &s.PlatformFee, &s.XenditFee, &s.VAT, &s.Withholding)
+	if err != nil {
+		return nil, fmt.Errorf("sum settled for tenant %d: %w", tenantID, err)
+	}
+	return &s, nil
+}
+
 // CursorPoint is the (created_at, id) keyset used for cursor pagination.
 type CursorPoint struct {
 	CreatedAt time.Time
@@ -156,11 +244,18 @@ type CursorPoint struct {
 // ListParams controls cursor-paginated listing of transactions for a single tenant.
 type ListParams struct {
 	// Limit is the maximum number of rows to return. Callers typically pass (pageSize+1) to detect has_more.
-	Limit  int
+	Limit int
 	// Cursor, when non-nil, returns rows that sort after this point (i.e. older records in DESC order).
 	Cursor *CursorPoint
 	// Status restricts results to the given statuses; empty means all statuses.
 	Status []domain.PaymentStatus
+	// CreatedFrom, when non-nil, restricts results to transactions created at or after this time.
+	CreatedFrom *time.Time
+	// CreatedTo, when non-nil, restricts results to transactions created before this time (exclusive).
+	CreatedTo *time.Time
+
+	// Provider, when non-empty, restricts results to transactions with this provider (e.g. "xendit", "manual_transfer").
+	Provider string
 }
 
 // ListByTenant returns transactions for tenantID in reverse-chronological order (newest first).
@@ -183,9 +278,24 @@ func (r *TransactionRepository) ListByTenant(ctx context.Context, tenantID int64
 		where = append(where, fmt.Sprintf("status = ANY($%d)", len(args)))
 	}
 
+	if p.CreatedFrom != nil {
+		args = append(args, *p.CreatedFrom)
+		where = append(where, fmt.Sprintf("created_at >= $%d", len(args)))
+	}
+
+	if p.CreatedTo != nil {
+		args = append(args, *p.CreatedTo)
+		where = append(where, fmt.Sprintf("created_at < $%d", len(args)))
+	}
+
 	if p.Cursor != nil {
 		args = append(args, p.Cursor.CreatedAt, p.Cursor.ID)
 		where = append(where, fmt.Sprintf("(created_at, id) < ($%d, $%d)", len(args)-1, len(args)))
+	}
+
+	if p.Provider != "" {
+		args = append(args, p.Provider)
+		where = append(where, fmt.Sprintf("provider = $%d", len(args)))
 	}
 
 	args = append(args, p.Limit)
@@ -228,23 +338,24 @@ const txnColumns = `
 	COALESCE(provider_invoice_id, ''),
 	COALESCE(provider_payment_id, ''),
 	COALESCE(checkout_url, ''),
-	COALESCE(xendit_account_id, ''),
 	COALESCE(payment_method, ''),
 	COALESCE(payment_channel, ''),
-	amount, currency, platform_fee, merchant_amount,
+	amount, currency, platform_fee, shipping_fee, merchant_amount,
 	status,
 	COALESCE(description, ''),
 	metadata,
 	expires_at, paid_at, settled_at,
+	xendit_fee, vat, xendit_withholding_tax, third_party_wht,
+	estimated_settlement_time,
 	created_at, updated_at, version`
 
 func scanTransaction(row pgx.Row) (*domain.PaymentTransaction, error) {
 	var (
-		t                            domain.PaymentTransaction
-		idStr                        string
-		status                       string
-		metaBytes                    []byte
-		expiresAt, paidAt, settledAt *time.Time
+		t                                               domain.PaymentTransaction
+		idStr                                           string
+		status                                          string
+		metaBytes                                       []byte
+		expiresAt, paidAt, settledAt, estSettlementTime *time.Time
 	)
 	err := row.Scan(
 		&idStr, &t.TenantID, &t.OrderNumber, &t.IdempotencyKey,
@@ -252,14 +363,15 @@ func scanTransaction(row pgx.Row) (*domain.PaymentTransaction, error) {
 		&t.ProviderInvoiceID,
 		&t.ProviderPaymentID,
 		&t.CheckoutURL,
-		&t.XenditAccountID,
 		&t.PaymentMethod,
 		&t.PaymentChannel,
-		&t.Amount, &t.Currency, &t.PlatformFee, &t.MerchantAmount,
+		&t.Amount, &t.Currency, &t.PlatformFee, &t.ShippingFee, &t.MerchantAmount,
 		&status,
 		&t.Description,
 		&metaBytes,
 		&expiresAt, &paidAt, &settledAt,
+		&t.XenditFee, &t.VAT, &t.XenditWithholdingTax, &t.ThirdPartyWHT,
+		&estSettlementTime,
 		&t.CreatedAt, &t.UpdatedAt, &t.Version,
 	)
 	if err != nil {
@@ -274,6 +386,7 @@ func scanTransaction(row pgx.Row) (*domain.PaymentTransaction, error) {
 	t.ExpiresAt = expiresAt
 	t.PaidAt = paidAt
 	t.SettledAt = settledAt
+	t.EstimatedSettlementTime = estSettlementTime
 	_ = unmarshalJSON(metaBytes, &t.Metadata)
 	return &t, nil
 }

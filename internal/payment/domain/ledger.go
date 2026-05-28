@@ -20,8 +20,13 @@ const (
 	AccountEscrow LedgerAccountType = "escrow"
 	// AccountMerchantPayable — net amount the platform owes a merchant after fees.
 	AccountMerchantPayable LedgerAccountType = "merchant_payable"
-	// AccountPlatformFee — revenue earned by the platform.
+	// AccountPlatformFee — revenue earned by the platform (connector commission).
 	AccountPlatformFee LedgerAccountType = "platform_fee"
+	// AccountShippingBalance — shipping credits held for a merchant.
+	// Topped up when a customer pays the shipping portion; debited when a shipment is dispatched.
+	AccountShippingBalance LedgerAccountType = "shipping_balance"
+	// AccountShippingDisbursed — funds paid out to the shipping provider (e.g. Biteship).
+	AccountShippingDisbursed LedgerAccountType = "shipping_disbursed"
 	// AccountPayout — disbursements made to merchants.
 	AccountPayout LedgerAccountType = "payout"
 	// AccountRefund — funds returned to customers.

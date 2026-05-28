@@ -3,7 +3,6 @@ package tokokarya
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -23,31 +22,20 @@ func NewClient(baseURL, apiKey string) *Client {
 	}
 }
 
-type UpdateAccountStatusRequest struct {
-	AccountID string `json:"account_id"`
-	Status    string `json:"status"`
-}
-
-func (c *Client) UpdateAccountStatus(ctx context.Context, accountID, status string) error {
-	body, err := json.Marshal(UpdateAccountStatusRequest{
-		AccountID: accountID,
-		Status:    status,
-	})
-	if err != nil {
-		return err
-	}
-	return c.postWebhook(ctx, body)
-}
-
 // ForwardWebhook forwards a raw Xendit payment webhook payload to Tokokarya.
 // The payload is sent as-is (no re-marshalling) so Tokokarya receives exactly
 // what Xendit sent.
 func (c *Client) ForwardWebhook(ctx context.Context, payload []byte) error {
-	return c.postWebhook(ctx, payload)
+	return c.post(ctx, "/api/webhooks/xenplatform", payload)
 }
 
-func (c *Client) postWebhook(ctx context.Context, body []byte) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/webhooks/xenplatform", bytes.NewReader(body))
+// ForwardShipmentWebhook forwards a raw Biteship shipment webhook payload to Tokokarya.
+func (c *Client) ForwardShipmentWebhook(ctx context.Context, payload []byte) error {
+	return c.post(ctx, "/api/webhooks/biteship", payload)
+}
+
+func (c *Client) post(ctx context.Context, path string, body []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

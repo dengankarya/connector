@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dengankarya/connector/internal/payment/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/dengankarya/overwatch/internal/payment/domain"
 )
 
 // WebhookEventRepository manages payment_webhook_events rows.
@@ -190,12 +190,12 @@ const eventColumns = `
 
 func scanEvent(row pgx.Row) (*domain.WebhookEvent, error) {
 	var (
-		e              domain.WebhookEvent
-		idStr          string
-		status         string
-		headersBytes   []byte
-		txnIDStr       *string
-		processedAt    *time.Time
+		e            domain.WebhookEvent
+		idStr        string
+		status       string
+		headersBytes []byte
+		txnIDStr     *string
+		processedAt  *time.Time
 	)
 	err := row.Scan(
 		&idStr, &e.Provider, &e.ProviderEventID, &e.EventType,

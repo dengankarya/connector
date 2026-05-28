@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dengankarya/connector/internal/payment/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/dengankarya/overwatch/internal/payment/domain"
 )
 
 // PayoutRepository manages payment_payouts rows.
@@ -33,21 +33,21 @@ func (r *PayoutRepository) Create(ctx context.Context, p *domain.Payout) error {
 
 	q := `
 		INSERT INTO payment_payouts (
-			id, tenant_id, for_user_id, provider, provider_payout_id,
+			id, tenant_id, provider, provider_payout_id,
 			amount, currency, status,
 			bank_code, account_number, account_name,
 			description, retry_count, max_retries,
 			scheduled_at, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5,
-			$6, $7, $8,
-			$9, $10, $11,
-			$12, $13, $14,
-			$15, $16, $17
+			$1, $2, $3, $4,
+			$5, $6, $7,
+			$8, $9, $10,
+			$11, $12, $13,
+			$14, $15, $16
 		)`
 
 	_, err := dbFromContext(ctx, r.pool).Exec(ctx, q,
-		p.ID, p.TenantID, nilIfEmpty(p.ForUserID), p.Provider, nilIfEmpty(p.ProviderPayoutID),
+		p.ID, p.TenantID, p.Provider, nilIfEmpty(p.ProviderPayoutID),
 		p.Amount, p.Currency, string(p.Status),
 		nilIfEmpty(p.BankCode), nilIfEmpty(p.AccountNumber), nilIfEmpty(p.AccountName),
 		nilIfEmpty(p.Description), p.RetryCount, p.MaxRetries,
@@ -130,7 +130,7 @@ func (r *PayoutRepository) ListByTenant(ctx context.Context, tenantID int64, lim
 // ─── column list & scanners ───────────────────────────────────────────────────
 
 const payoutColumns = `
-	id::text, tenant_id, COALESCE(for_user_id, ''), provider,
+	id::text, tenant_id, provider,
 	COALESCE(provider_payout_id, ''),
 	amount, currency, status,
 	COALESCE(bank_code, ''),
@@ -149,7 +149,7 @@ func scanPayout(row pgx.Row) (*domain.Payout, error) {
 		scheduledAt, processedAt *time.Time
 	)
 	err := row.Scan(
-		&idStr, &p.TenantID, &p.ForUserID, &p.Provider,
+		&idStr, &p.TenantID, &p.Provider,
 		&p.ProviderPayoutID,
 		&p.Amount, &p.Currency, &status,
 		&p.BankCode,

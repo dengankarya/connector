@@ -5,18 +5,17 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dengankarya/connector/internal/payment/domain"
+	"github.com/dengankarya/connector/internal/payment/ledger"
+	"github.com/dengankarya/connector/internal/payment/provider"
+	"github.com/dengankarya/connector/internal/payment/repository"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
-	"github.com/dengankarya/overwatch/internal/payment/domain"
-	"github.com/dengankarya/overwatch/internal/payment/ledger"
-	"github.com/dengankarya/overwatch/internal/payment/provider"
-	"github.com/dengankarya/overwatch/internal/payment/repository"
 )
 
 // CreatePayoutRequest is the input for initiating a merchant payout.
 type CreatePayoutRequest struct {
 	TenantID      int64
-	ForUserID     string // Xendit sub-account ID (for-user-id header)
 	Amount        int64
 	Currency      string
 	BankCode      string
@@ -29,12 +28,12 @@ type CreatePayoutRequest struct {
 
 // PayoutService handles payout creation and lifecycle.
 type PayoutService struct {
-	payoutRepo  *repository.PayoutRepository
-	ledgerRepo  *repository.LedgerRepository
-	ledgerSvc   *ledger.Service
-	prov        provider.PaymentProvider
-	txRunner    *repository.TxRunner
-	logger      *logrus.Logger
+	payoutRepo *repository.PayoutRepository
+	ledgerRepo *repository.LedgerRepository
+	ledgerSvc  *ledger.Service
+	prov       provider.PaymentProvider
+	txRunner   *repository.TxRunner
+	logger     *logrus.Logger
 }
 
 // NewPayoutService creates a PayoutService.
@@ -72,7 +71,6 @@ func (s *PayoutService) CreatePayout(ctx context.Context, req CreatePayoutReques
 
 	payout := &domain.Payout{
 		TenantID:      req.TenantID,
-		ForUserID:     req.ForUserID,
 		Provider:      s.prov.ProviderName(),
 		Amount:        req.Amount,
 		Currency:      req.Currency,
@@ -117,7 +115,6 @@ func (s *PayoutService) DispatchPayout(ctx context.Context, payoutID uuid.UUID) 
 		}
 
 		result, err := s.prov.CreatePayout(txCtx, provider.CreatePayoutRequest{
-			ForUserID:     payout.ForUserID,
 			ExternalID:    payout.ID.String(),
 			Amount:        payout.Amount,
 			Currency:      payout.Currency,

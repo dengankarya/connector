@@ -17,11 +17,10 @@ const (
 	PayoutStatusCancelled  PayoutStatus = "cancelled"
 )
 
-// Payout tracks a single merchant settlement disbursement.
+// Payout tracks a single merchant settlement disbursement from the platform master account.
 type Payout struct {
 	ID               uuid.UUID    `json:"id,omitempty"`
 	TenantID         int64        `json:"tenant_id,omitempty"`
-	ForUserID        string       `json:"for_user_id,omitempty"` // Xendit sub-account ID used as the for-user-id request header
 	Provider         string       `json:"provider,omitempty"`
 	ProviderPayoutID string       `json:"provider_payout_id,omitempty"`
 	Amount           int64        `json:"amount,omitempty"`

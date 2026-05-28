@@ -2,90 +2,46 @@ package payment
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/dengankarya/overwatch/common"
-	"github.com/dengankarya/overwatch/internal/payment/domain"
-	"github.com/dengankarya/overwatch/internal/payment/provider"
-	"github.com/dengankarya/overwatch/internal/payment/repository"
-	paymentservice "github.com/dengankarya/overwatch/internal/payment/service"
-	"github.com/dengankarya/overwatch/internal/payment/webhook"
-	"github.com/dengankarya/overwatch/internal/worker"
+	"github.com/dengankarya/connector/common"
+	"github.com/dengankarya/connector/internal/payment/domain"
+	"github.com/dengankarya/connector/internal/payment/provider"
+	"github.com/dengankarya/connector/internal/payment/repository"
+	paymentservice "github.com/dengankarya/connector/internal/payment/service"
+	"github.com/dengankarya/connector/internal/payment/webhook"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/sirupsen/logrus"
 )
 
-// ─── XenPlatform account controller (existing, unchanged) ────────────────────
+// ─── Xendit webhook controller ────────────────────────────────────────────────
 
 type controller struct {
-	svc              *PaymentService
 	webhookToken     string
 	enqueuer         *asynq.Client
-	paymentProcessor *webhook.Processor              // nil on legacy path
-	xenditProvider   provider.PaymentProvider        // nil on legacy path
-	requestLogRepo   *repository.WebhookRequestLogRepository // nil on legacy path
+	paymentProcessor *webhook.Processor
+	xenditProvider   provider.PaymentProvider
+	requestLogRepo   *repository.WebhookRequestLogRepository
 }
 
-// RegisterWebhookHandler registers the Xendit webhook endpoint on a public (unauthenticated) router.
-func RegisterWebhookHandler(mux fiber.Router, svc *PaymentService, webhookToken string, enqueuer *asynq.Client) {
-	ctrl := controller{svc: svc, webhookToken: webhookToken, enqueuer: enqueuer}
-	mux.Post("/webhook/xendit", ctrl.handleWebhook)
-}
-
-// RegisterHandlers registers authenticated XenPlatform account endpoints.
-func RegisterHandlers(mux fiber.Router, svc *PaymentService) {
-	ctrl := controller{svc: svc}
-	mux.Post("/accounts", ctrl.handleCreateAccount)
-	mux.Get("/accounts/:id", ctrl.handleGetAccount)
-}
-
-func (ctrl *controller) handleCreateAccount(c fiber.Ctx) error {
-	var req CreateAccountRequest
-	if err := c.Bind().JSON(&req); err != nil {
-		return c.Status(http.StatusBadRequest).JSON(common.Response{
-			Status: http.StatusText(http.StatusBadRequest),
-			Error:  err.Error(),
-		})
-	}
-
-	account, err := ctrl.svc.CreateAccount(c.Context(), req)
-	if err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(common.Response{
-			Status: http.StatusText(http.StatusInternalServerError),
-			Error:  err.Error(),
-		})
-	}
-
-	return c.Status(http.StatusCreated).JSON(common.Response{
-		Status: http.StatusText(http.StatusCreated),
-		Data:   account,
-	})
-}
-
-func (ctrl *controller) handleGetAccount(c fiber.Ctx) error {
-	id := c.Params("id")
-
-	account, err := ctrl.svc.GetAccount(c.Context(), id)
-	if err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(common.Response{
-			Status: http.StatusText(http.StatusInternalServerError),
-			Error:  err.Error(),
-		})
-	}
-
-	return c.Status(http.StatusOK).JSON(common.Response{
-		Status: http.StatusText(http.StatusOK),
-		Data:   account,
-	})
-}
-
+// handleWebhook godoc
+//
+//	@Summary		Xendit webhook
+//	@Description	Receives Xendit payment callback events. Validates the x-callback-token header, stores the raw event, and enqueues async processing. Always returns HTTP 200 to prevent Xendit retries on errors.
+//	@Tags			Webhooks
+//	@Accept			json
+//	@Produce		json
+//	@Param			x-callback-token	header		string			true	"Xendit callback token"
+//	@Param			body				body		object			true	"Xendit webhook event payload"
+//	@Success		200					{object}	common.Response	"OK"
+//	@Router			/webhook/xendit [post]
+//
 // handleWebhook is the public Xendit callback endpoint.
 // It validates the signature, stores the raw event, and enqueues async processing.
 func (ctrl *controller) handleWebhook(c fiber.Ctx) error {
@@ -137,23 +93,6 @@ func (ctrl *controller) handleWebhook(c fiber.Ctx) error {
 
 	rawBody := c.Body()
 
-	// Route account lifecycle events (account.*, kyc.*) to the XenPlatform handler.
-	// NOTE: Xendit puts business_id in ALL webhook envelopes, including payment_session.*
-	// and payment.* events — so we must check the event type, not just business_id presence.
-	var baseEvent WebhookEvent
-	if err := json.Unmarshal(rawBody, &baseEvent); err == nil && isAccountEvent(baseEvent.Event) {
-		ctrl.enqueueAccountUpdate(baseEvent)
-		return c.Status(http.StatusOK).JSON(common.Response{Status: "OK"})
-	}
-
-	// Legacy path: no payment module wired → log and return.
-	if ctrl.paymentProcessor == nil {
-		var event map[string]any
-		_ = json.Unmarshal(rawBody, &event)
-		log.WithField("data", event).Info("received xendit webhook (no processor configured)")
-		return c.Status(http.StatusOK).JSON(common.Response{Status: "OK"})
-	}
-
 	// Extract all headers as a map for storage.
 	headers := make(map[string]string)
 	c.Request().Header.VisitAll(func(key, value []byte) {
@@ -186,37 +125,7 @@ func (ctrl *controller) handleWebhook(c fiber.Ctx) error {
 	return c.Status(http.StatusOK).JSON(common.Response{Status: "OK"})
 }
 
-func (ctrl *controller) enqueueAccountUpdate(event WebhookEvent) {
-	var dataMap map[string]any
-	if raw, err := json.Marshal(event.Data); err == nil {
-		_ = json.Unmarshal(raw, &dataMap)
-	}
-
-	payload, err := json.Marshal(worker.XenplatformAccountUpdatedPayload{
-		Event:      event.Event,
-		BusinessID: event.BusinessID,
-		Data:       dataMap,
-	})
-	if err != nil {
-		logrus.WithError(err).Error("webhook: failed to marshal task payload")
-		return
-	}
-
-	task := asynq.NewTask(worker.TaskXenplatformAccountUpdated, payload)
-	info, err := ctrl.enqueuer.Enqueue(task, asynq.MaxRetry(5))
-	if err != nil {
-		logrus.WithError(err).WithField("event", event.Event).Error("webhook: failed to enqueue task")
-		return
-	}
-
-	logrus.WithFields(logrus.Fields{
-		"task_id":    info.ID,
-		"event":      event.Event,
-		"account_id": dataMap["id"],
-	}).Info("webhook: enqueued xenplatform task")
-}
-
-// ─── New payment module controller ───────────────────────────────────────────
+// ─── Payment module controller ───────────────────────────────────────────────
 
 type paymentController struct {
 	svc       *paymentservice.PaymentService
@@ -232,17 +141,19 @@ func RegisterPaymentHandlers(
 	logger *logrus.Logger,
 ) {
 	ctrl := &paymentController{svc: svc, replaySvc: replaySvc, logger: logger}
-	mux.Get("/", ctrl.listTransactions)
+	mux.Get("/transactions", ctrl.listTransactions)
+
 	mux.Post("/", ctrl.createPayment)
 	mux.Post("/manual", ctrl.createManualPayment)
+	mux.Post("/manual/:id/confirm", ctrl.confirmManualPayment)
 	mux.Get("/:id", ctrl.getPayment)
+	mux.Post("/:id/refresh", ctrl.refreshPayment)
 	mux.Post("/webhooks/:event_id/replay", ctrl.replayWebhook)
 }
 
-// RegisterWebhookHandlerV2 registers the new Xendit webhook handler that uses full payment module wiring.
+// RegisterWebhookHandlerV2 registers the Xendit webhook endpoint on the public router.
 func RegisterWebhookHandlerV2(
 	mux fiber.Router,
-	svc *PaymentService,
 	webhookToken string,
 	enqueuer *asynq.Client,
 	processor *webhook.Processor,
@@ -250,7 +161,6 @@ func RegisterWebhookHandlerV2(
 	requestLogRepo *repository.WebhookRequestLogRepository,
 ) {
 	ctrl := controller{
-		svc:              svc,
 		webhookToken:     webhookToken,
 		enqueuer:         enqueuer,
 		paymentProcessor: processor,
@@ -260,6 +170,20 @@ func RegisterWebhookHandlerV2(
 	mux.Post("/webhook/xendit", ctrl.handleWebhook)
 }
 
+// createPayment godoc
+//
+//	@Summary		Create payment session
+//	@Description	Creates a new Xendit payment session (invoice) for a tenant order. Returns a checkout_url the customer visits to complete payment.
+//	@Tags			Payments
+//	@Accept			json
+//	@Produce		json
+//	@Param			X-Tenant-ID	header		int64											true	"Tenant ID"
+//	@Param			body		body		CreatePaymentBody								true	"Payment creation request"
+//	@Success		201			{object}	common.Response{data=domain.PaymentTransaction}	"Payment session created"
+//	@Failure		400			{object}	common.Response									"Invalid request"
+//	@Failure		500			{object}	common.Response									"Internal server error"
+//	@Security		ApiKeyAuth
+//	@Router			/payments [post]
 func (ctrl *paymentController) createPayment(c fiber.Ctx) error {
 	tenantID := mustParseIntHeader(c, "X-Tenant-ID")
 	if tenantID == 0 {
@@ -275,6 +199,7 @@ func (ctrl *paymentController) createPayment(c fiber.Ctx) error {
 		Amount                 int64          `json:"amount"`
 		Currency               string         `json:"currency"`
 		PlatformFee            int64          `json:"platform_fee"`
+		ShippingFee            int64          `json:"shipping_fee"`
 		AllowedPaymentChannels []string       `json:"allowed_payment_channels"`
 		SuccessReturnURL       string         `json:"success_return_url"`
 		CancelReturnURL        string         `json:"cancel_return_url"`
@@ -282,7 +207,6 @@ func (ctrl *paymentController) createPayment(c fiber.Ctx) error {
 		CustomerEmail          string         `json:"customer_email"`
 		CustomerName           string         `json:"customer_name"`
 		CustomerReferenceID    string         `json:"customer_reference_id"`
-		ForUserID              string         `json:"for_user_id"`
 		Metadata               map[string]any `json:"metadata"`
 	}
 	if err := c.Bind().JSON(&body); err != nil {
@@ -299,12 +223,12 @@ func (ctrl *paymentController) createPayment(c fiber.Ctx) error {
 
 	txn, err := ctrl.svc.CreatePayment(c.Context(), paymentservice.CreatePaymentRequest{
 		TenantID:               tenantID,
-		ForUserID:              body.ForUserID,
 		OrderNumber:            body.OrderNumber,
 		IdempotencyKey:         body.IdempotencyKey,
 		Amount:                 body.Amount,
 		Currency:               body.Currency,
 		PlatformFee:            body.PlatformFee,
+		ShippingFee:            body.ShippingFee,
 		AllowedPaymentChannels: body.AllowedPaymentChannels,
 		SuccessReturnURL:       body.SuccessReturnURL,
 		CancelReturnURL:        body.CancelReturnURL,
@@ -327,6 +251,20 @@ func (ctrl *paymentController) createPayment(c fiber.Ctx) error {
 	})
 }
 
+// getPayment godoc
+//
+//	@Summary		Get payment transaction
+//	@Description	Retrieves a payment transaction by its UUID for the authenticated tenant.
+//	@Tags			Payments
+//	@Produce		json
+//	@Param			X-Tenant-ID	header		int64											true	"Tenant ID"
+//	@Param			id			path		string											true	"Transaction UUID"
+//	@Success		200			{object}	common.Response{data=domain.PaymentTransaction}	"Transaction details"
+//	@Failure		400			{object}	common.Response									"Invalid transaction ID"
+//	@Failure		404			{object}	common.Response									"Transaction not found"
+//	@Failure		500			{object}	common.Response									"Internal server error"
+//	@Security		ApiKeyAuth
+//	@Router			/payments/{id} [get]
 func (ctrl *paymentController) getPayment(c fiber.Ctx) error {
 	tenantID := mustParseIntHeader(c, "X-Tenant-ID")
 	if tenantID == 0 {
@@ -358,6 +296,21 @@ func (ctrl *paymentController) getPayment(c fiber.Ctx) error {
 	return c.Status(http.StatusOK).JSON(common.Response{Status: "OK", Data: txn})
 }
 
+// createManualPayment godoc
+//
+//	@Summary		Create manual payment
+//	@Description	Records a manual (off-platform) payment without calling Xendit. Returns a provider_invoice_id prefixed with "manual-" that Tokokarya uses as the payment_session_id.
+//	@Tags			Payments
+//	@Accept			json
+//	@Produce		json
+//	@Param			X-Tenant-ID	header		int64											true	"Tenant ID"
+//	@Param			body		body		CreateManualPaymentBody							true	"Manual payment request"
+//	@Success		201			{object}	common.Response{data=domain.PaymentTransaction}	"Manual payment created"
+//	@Failure		400			{object}	common.Response									"Invalid request"
+//	@Failure		409			{object}	common.Response									"Duplicate idempotency key"
+//	@Failure		500			{object}	common.Response									"Internal server error"
+//	@Security		ApiKeyAuth
+//	@Router			/payments/manual [post]
 func (ctrl *paymentController) createManualPayment(c fiber.Ctx) error {
 	tenantID := mustParseIntHeader(c, "X-Tenant-ID")
 	if tenantID == 0 {
@@ -366,20 +319,11 @@ func (ctrl *paymentController) createManualPayment(c fiber.Ctx) error {
 		})
 	}
 
-	var body struct {
-		OrderNumber    string         `json:"order_number"`
-		IdempotencyKey string         `json:"idempotency_key"`
-		Amount         int64          `json:"amount"`
-		Currency       string         `json:"currency"`
-		PlatformFee    int64          `json:"platform_fee"`
-		PaymentMethod  string         `json:"payment_method"`
-		PaymentChannel string         `json:"payment_channel"`
-		Description    string         `json:"description"`
-		Metadata       map[string]any `json:"metadata"`
-	}
+	var body CreateManualPaymentBody
 	if err := c.Bind().JSON(&body); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(common.Response{
 			Status: "Bad Request", Error: err.Error(),
+			Message: "failed to decode response body",
 		})
 	}
 
@@ -406,6 +350,7 @@ func (ctrl *paymentController) createManualPayment(c fiber.Ctx) error {
 		Amount:         body.Amount,
 		Currency:       body.Currency,
 		PlatformFee:    body.PlatformFee,
+		ShippingFee:    body.ShippingFee,
 		PaymentMethod:  body.PaymentMethod,
 		PaymentChannel: body.PaymentChannel,
 		Description:    body.Description,
@@ -429,6 +374,125 @@ func (ctrl *paymentController) createManualPayment(c fiber.Ctx) error {
 	})
 }
 
+// confirmManualPayment godoc
+//
+//	@Summary		Confirm manual payment
+//	@Description	Marks a manual payment as paid, writes ledger entries, and returns the updated transaction. Idempotent — safe to call again if already confirmed.
+//	@Tags			Payments
+//	@Accept			json
+//	@Produce		json
+//	@Param			X-Tenant-ID	header		int64											true	"Tenant ID"
+//	@Param			id			path		string											true	"Transaction UUID"
+//	@Param			body		body		ConfirmManualPaymentBody						false	"Optional payment channel override"
+//	@Success		200			{object}	common.Response{data=domain.PaymentTransaction}	"Payment confirmed"
+//	@Failure		400			{object}	common.Response									"Invalid transaction ID or not a manual payment"
+//	@Failure		404			{object}	common.Response									"Transaction not found"
+//	@Failure		500			{object}	common.Response									"Internal server error"
+//	@Security		ApiKeyAuth
+//	@Router			/payments/manual/{id}/confirm [post]
+func (ctrl *paymentController) confirmManualPayment(c fiber.Ctx) error {
+	tenantID := mustParseIntHeader(c, "X-Tenant-ID")
+	if tenantID == 0 {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: "X-Tenant-ID header is required",
+		})
+	}
+
+	txnID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: "invalid transaction id",
+		})
+	}
+
+	var body ConfirmManualPaymentBody
+	_ = c.Bind().JSON(&body) // body is optional
+
+	txn, err := ctrl.svc.ConfirmManualPayment(c.Context(), paymentservice.ConfirmManualPaymentRequest{
+		TenantID:       tenantID,
+		TransactionID:  txnID,
+		PaymentChannel: body.PaymentChannel,
+	})
+	if err != nil {
+		var nf domain.ErrNotFound
+		if ok := isErrNotFound(err, &nf); ok {
+			return c.Status(http.StatusNotFound).JSON(common.Response{
+				Status: "Not Found", Error: nf.Error(),
+			})
+		}
+		ctrl.logger.WithError(err).Error("confirm manual payment failed")
+		return c.Status(http.StatusInternalServerError).JSON(common.Response{
+			Status: "Internal Server Error", Error: err.Error(),
+		})
+	}
+
+	return c.Status(http.StatusOK).JSON(common.Response{Status: "OK", Data: txn})
+}
+
+// refreshPayment godoc
+//
+//	@Summary		Refresh payment transaction
+//	@Description	Fetches the latest state of a payment session directly from Xendit and updates our records if the status changed. Safe to call multiple times. Returns immediately for manual payments or transactions already in a final state.
+//	@Tags			Payments
+//	@Produce		json
+//	@Param			X-Tenant-ID	header		int64											true	"Tenant ID"
+//	@Param			id			path		string											true	"Transaction UUID"
+//	@Success		200			{object}	common.Response{data=domain.PaymentTransaction}	"Latest transaction state"
+//	@Failure		400			{object}	common.Response									"Invalid transaction ID"
+//	@Failure		404			{object}	common.Response									"Transaction not found"
+//	@Failure		500			{object}	common.Response									"Internal server error"
+//	@Security		ApiKeyAuth
+//	@Router			/payments/{id}/refresh [post]
+func (ctrl *paymentController) refreshPayment(c fiber.Ctx) error {
+	tenantID := mustParseIntHeader(c, "X-Tenant-ID")
+	if tenantID == 0 {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: "X-Tenant-ID header is required",
+		})
+	}
+
+	txnID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: "invalid transaction id",
+		})
+	}
+
+	txn, err := ctrl.svc.RefreshPayment(c.Context(), tenantID, txnID)
+	if err != nil {
+		var nf domain.ErrNotFound
+		if isErrNotFound(err, &nf) {
+			return c.Status(http.StatusNotFound).JSON(common.Response{
+				Status: "Not Found", Error: nf.Error(),
+			})
+		}
+		ctrl.logger.WithError(err).Error("refresh payment failed")
+		return c.Status(http.StatusInternalServerError).JSON(common.Response{
+			Status: "Internal Server Error", Error: err.Error(),
+		})
+	}
+
+	return c.Status(http.StatusOK).JSON(common.Response{Status: "OK", Data: txn})
+}
+
+// listTransactions godoc
+//
+//	@Summary		List payment transactions
+//	@Description	Returns a cursor-paginated list of payment transactions for the tenant. Supports filtering by status.
+//	@Tags			Payments
+//	@Produce		json
+//	@Param			X-Tenant-ID	header		int64																		true	"Tenant ID"
+//	@Param			limit		query		int																			false	"Number of results per page (default 20, max 100)"
+//	@Param			cursor		query		string																		false	"Pagination cursor returned by previous response"
+//	@Param			status		query		string																		false	"Comma-separated statuses to filter"	Enums(pending,awaiting_payment,paid,settled,refunding,refunded,expired,failed,voided)
+//	@Param			date_from	query		string																		false	"Start date inclusive, format YYYY-MM-DD (e.g. 2026-05-01)"
+//	@Param			date_to		query		string																		false	"End date inclusive, format YYYY-MM-DD (e.g. 2026-05-31)"
+//	@Param			provider	query		string																		false	"Provider to filter by (e.g. 'xendit', 'manual_transfer')"
+//	@Success		200			{object}	common.Response{data=common.PaginationResponse[domain.PaymentTransaction]}	"Paginated transaction list"
+//	@Failure		400			{object}	common.Response																"Invalid request or cursor"
+//	@Failure		500			{object}	common.Response																"Internal server error"
+//	@Security		ApiKeyAuth
+//	@Router			/payments/transactions [get]
 func (ctrl *paymentController) listTransactions(c fiber.Ctx) error {
 	tenantID := mustParseIntHeader(c, "X-Tenant-ID")
 	if tenantID == 0 {
@@ -439,14 +503,50 @@ func (ctrl *paymentController) listTransactions(c fiber.Ctx) error {
 
 	limit, _ := strconv.Atoi(c.Query("limit", "20"))
 	cursor := c.Query("cursor")
+	paymentProvider := c.Query("provider")
+	// Optional filter by provider (e.g. "xendit", "manual_transfer")
+	if paymentProvider != "" {
+		// Validate provider value if necessary (e.g. against a list of known providers)
+		// For now, we just pass it through to the service layer for filtering.
+		if paymentProvider != "xendit" && paymentProvider != "manual_transfer" {
+			return c.Status(http.StatusBadRequest).JSON(common.Response{
+				Status: "Bad Request", Error: "invalid provider value",
+			})
+		}
+	}
 
 	// Accept comma-separated statuses: ?status=paid,settled
 	var statuses []domain.PaymentStatus
 	if s := c.Query("status"); s != "" {
 		for _, part := range strings.Split(s, ",") {
-			if part = strings.TrimSpace(part); part != "" {
-				statuses = append(statuses, domain.PaymentStatus(part))
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
 			}
+			ps := domain.PaymentStatus(part)
+			if !ps.IsValid() {
+				return c.Status(http.StatusBadRequest).JSON(common.Response{
+					Status: "Bad Request",
+					Error:  "invalid status value: " + part,
+				})
+			}
+			statuses = append(statuses, ps)
+		}
+	}
+
+	// Date range: accept YYYY-MM-DD. date_from is inclusive (start of day UTC);
+	// date_to is inclusive (end of day UTC, stored as start of next day).
+	var dateFrom, dateTo *time.Time
+	if s := c.Query("date_from"); s != "" {
+		if t, err := time.Parse("2006-01-02", s); err == nil {
+			t = t.UTC()
+			dateFrom = &t
+		}
+	}
+	if s := c.Query("date_to"); s != "" {
+		if t, err := time.Parse("2006-01-02", s); err == nil {
+			t = t.UTC().AddDate(0, 0, 1) // exclusive upper bound = start of next day
+			dateTo = &t
 		}
 	}
 
@@ -455,6 +555,9 @@ func (ctrl *paymentController) listTransactions(c fiber.Ctx) error {
 		Limit:    limit,
 		Cursor:   cursor,
 		Status:   statuses,
+		DateFrom: dateFrom,
+		DateTo:   dateTo,
+		Provider: paymentProvider,
 	})
 	if err != nil {
 		if errors.Is(err, paymentservice.ErrInvalidCursor) {
@@ -470,14 +573,29 @@ func (ctrl *paymentController) listTransactions(c fiber.Ctx) error {
 
 	return c.Status(http.StatusOK).JSON(common.Response{
 		Status: "OK",
-		Data: map[string]any{
-			"items":       result.Items,
-			"next_cursor": result.NextCursor,
-			"has_more":    result.HasMore,
+		Data: common.PaginationResponse[*domain.PaymentTransaction]{
+			Items:      result.Items,
+			NextCursor: result.NextCursor,
+			HasMore:    result.HasMore,
 		},
 	})
 }
 
+// replayWebhook godoc
+//
+//	@Summary		Replay webhook event
+//	@Description	Re-enqueues a previously received Xendit webhook event for reprocessing. Use force=true to re-enqueue already-processed events.
+//	@Tags			Payments
+//	@Accept			json
+//	@Produce		json
+//	@Param			event_id	path		string				true	"Webhook event UUID"
+//	@Param			body		body		ReplayWebhookBody	false	"Replay options"
+//	@Success		202			{object}	common.Response		"Event enqueued for replay"
+//	@Failure		400			{object}	common.Response		"Invalid event ID"
+//	@Failure		409			{object}	common.Response		"Event already processed; use force=true to override"
+//	@Failure		500			{object}	common.Response		"Internal server error"
+//	@Security		ApiKeyAuth
+//	@Router			/payments/webhooks/{event_id}/replay [post]
 func (ctrl *paymentController) replayWebhook(c fiber.Ctx) error {
 	eventID, err := uuid.Parse(c.Params("event_id"))
 	if err != nil {
@@ -526,21 +644,4 @@ func isErrNotFound(err error, target *domain.ErrNotFound) bool {
 		*target = nf
 	}
 	return ok
-}
-
-// isAccountEvent returns true for Xendit account/KYC lifecycle events that should
-// be routed to the XenPlatform account handler. Payment events (payment_session.*,
-// payment.*) return false even though they also carry a business_id in the envelope.
-func isAccountEvent(event string) bool {
-	if len(event) == 0 {
-		return false
-	}
-	// Account and KYC events from Xendit XenPlatform callbacks.
-	prefixes := []string{"account.", "kyc.", "verification."}
-	for _, p := range prefixes {
-		if len(event) >= len(p) && event[:len(p)] == p {
-			return true
-		}
-	}
-	return false
 }

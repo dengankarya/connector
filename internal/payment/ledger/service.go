@@ -8,10 +8,10 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/dengankarya/connector/internal/payment/domain"
+	"github.com/dengankarya/connector/internal/payment/repository"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
-	"github.com/dengankarya/overwatch/internal/payment/domain"
-	"github.com/dengankarya/overwatch/internal/payment/repository"
 )
 
 // Service writes balanced double-entry journals to the ledger.
@@ -28,24 +28,36 @@ func New(repo *repository.LedgerRepository, logger *logrus.Logger) *Service {
 // RecordPayment creates ledger entries for a payment received event (invoice.paid).
 //
 // Journal:
-//   DR  escrow              amount (gross funds received)
-//   CR  merchant_payable    merchant_amount (owed to merchant)
-//   CR  platform_fee        platform_fee (if > 0, platform revenue)
+//
+//	DR  escrow              amount (gross funds received)
+//	CR  merchant_payable    merchant_amount (owed to merchant)
+//	CR  platform_fee        platform_fee (if > 0, platform revenue)
 //
 // All amounts must be positive. The journal is validated before writing.
 func (s *Service) RecordPayment(ctx context.Context, txn *domain.PaymentTransaction, eventID uuid.UUID) error {
-	journal, err := buildPaymentJournal(txn, eventID)
+	journal, err := buildPaymentJournal(txn, &eventID)
 	if err != nil {
 		return err
 	}
 	return s.write(ctx, journal, txn.ID, "record_payment")
 }
 
+// RecordManualPayment creates the same ledger entries as RecordPayment but with no
+// linked webhook event — used for manual payment confirmations via the confirm endpoint.
+func (s *Service) RecordManualPayment(ctx context.Context, txn *domain.PaymentTransaction) error {
+	journal, err := buildPaymentJournal(txn, nil)
+	if err != nil {
+		return err
+	}
+	return s.write(ctx, journal, txn.ID, "record_manual_payment")
+}
+
 // RecordSettlement creates ledger entries when a payment is settled (invoice.settlement).
 //
 // Journal:
-//   DR  merchant_payable    merchant_amount (liability fulfilled)
-//   CR  merchant_payable    merchant_amount (re-classify as ready for payout)
+//
+//	DR  merchant_payable    merchant_amount (liability fulfilled)
+//	CR  merchant_payable    merchant_amount (re-classify as ready for payout)
 //
 // In practice this is a no-op for the merchant_payable balance but provides
 // an audit trail that settlement has been confirmed by the provider.
@@ -82,8 +94,9 @@ func (s *Service) RecordSettlement(ctx context.Context, txn *domain.PaymentTrans
 // RecordRefund creates ledger entries for a refund event.
 //
 // Journal:
-//   DR  refund    amount
-//   CR  escrow    amount (funds returned from escrow)
+//
+//	DR  refund    amount
+//	CR  escrow    amount (funds returned from escrow)
 func (s *Service) RecordRefund(ctx context.Context, txn *domain.PaymentTransaction, eventID uuid.UUID, refundAmount int64) error {
 	ref := fmt.Sprintf("txn:%s:refunded", txn.ID)
 	journal := &domain.LedgerJournal{
@@ -118,8 +131,9 @@ func (s *Service) RecordRefund(ctx context.Context, txn *domain.PaymentTransacti
 // RecordPayout creates ledger entries when a payout is dispatched to a merchant.
 //
 // Journal:
-//   DR  merchant_payable    amount (liability reduced)
-//   CR  payout              amount (disbursement recorded)
+//
+//	DR  merchant_payable    amount (liability reduced)
+//	CR  payout              amount (disbursement recorded)
 func (s *Service) RecordPayout(ctx context.Context, tenantID int64, transactionID uuid.UUID, payoutID uuid.UUID, amount int64, currency string) error {
 	ref := fmt.Sprintf("payout:%s", payoutID)
 	journal := &domain.LedgerJournal{
@@ -178,7 +192,7 @@ func (s *Service) write(ctx context.Context, j *domain.LedgerJournal, txnID uuid
 
 // ─── journal builders ─────────────────────────────────────────────────────────
 
-func buildPaymentJournal(txn *domain.PaymentTransaction, eventID uuid.UUID) (*domain.LedgerJournal, error) {
+func buildPaymentJournal(txn *domain.PaymentTransaction, eventID *uuid.UUID) (*domain.LedgerJournal, error) {
 	if err := txn.Validate(); err != nil {
 		return nil, fmt.Errorf("build payment journal: %w", err)
 	}
@@ -189,7 +203,7 @@ func buildPaymentJournal(txn *domain.PaymentTransaction, eventID uuid.UUID) (*do
 		{
 			TenantID:       txn.TenantID,
 			TransactionID:  txn.ID,
-			WebhookEventID: &eventID,
+			WebhookEventID: eventID,
 			AccountType:    domain.AccountEscrow,
 			Direction:      domain.DirectionDebit, // asset: we hold these funds
 			Amount:         txn.Amount,
@@ -200,7 +214,7 @@ func buildPaymentJournal(txn *domain.PaymentTransaction, eventID uuid.UUID) (*do
 		{
 			TenantID:       txn.TenantID,
 			TransactionID:  txn.ID,
-			WebhookEventID: &eventID,
+			WebhookEventID: eventID,
 			AccountType:    domain.AccountMerchantPayable,
 			Direction:      domain.DirectionCredit, // liability: we owe merchant
 			Amount:         txn.MerchantAmount,
@@ -214,13 +228,27 @@ func buildPaymentJournal(txn *domain.PaymentTransaction, eventID uuid.UUID) (*do
 		entries = append(entries, domain.LedgerEntry{
 			TenantID:       txn.TenantID,
 			TransactionID:  txn.ID,
-			WebhookEventID: &eventID,
+			WebhookEventID: eventID,
 			AccountType:    domain.AccountPlatformFee,
 			Direction:      domain.DirectionCredit, // revenue earned
 			Amount:         txn.PlatformFee,
 			Currency:       txn.Currency,
 			ReferenceID:    baseRef + ":platform_fee",
 			Description:    "Platform fee revenue",
+		})
+	}
+
+	if txn.ShippingFee > 0 {
+		entries = append(entries, domain.LedgerEntry{
+			TenantID:       txn.TenantID,
+			TransactionID:  txn.ID,
+			WebhookEventID: eventID,
+			AccountType:    domain.AccountShippingBalance,
+			Direction:      domain.DirectionCredit, // liability: we owe merchant shipping credits
+			Amount:         txn.ShippingFee,
+			Currency:       txn.Currency,
+			ReferenceID:    baseRef + ":shipping_balance",
+			Description:    "Shipping balance topped up for merchant",
 		})
 	}
 

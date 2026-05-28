@@ -5,11 +5,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dengankarya/connector/internal/payment/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/dengankarya/overwatch/internal/payment/domain"
 )
-
 
 // LedgerRepository manages payment_ledger_entries rows.
 // Entries are append-only — no Update or Delete methods are provided by design.

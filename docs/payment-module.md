@@ -16,14 +16,15 @@ This document describes the design, data flow, and operational details of the pa
 8. [Manual Payments](#8-manual-payments)
 9. [Webhook Replay & Retry](#9-webhook-replay--retry)
 10. [Background Jobs](#10-background-jobs)
-11. [API Reference](#11-api-reference)
-12. [Security Design](#12-security-design)
-13. [Observability & Logging](#13-observability--logging)
-14. [Database Schema](#14-database-schema)
-15. [Adding a New Payment Provider](#15-adding-a-new-payment-provider)
-16. [Configuration](#16-configuration)
-17. [Running & Migrations](#17-running--migrations)
-18. [Failure Scenarios](#18-failure-scenarios)
+11. [Settlement Sync](#11-settlement-sync)
+12. [API Reference](#12-api-reference)
+13. [Security Design](#13-security-design)
+14. [Observability & Logging](#14-observability--logging)
+15. [Database Schema](#15-database-schema)
+16. [Adding a New Payment Provider](#16-adding-a-new-payment-provider)
+17. [Configuration](#17-configuration)
+18. [Running & Migrations](#18-running--migrations)
+19. [Failure Scenarios](#19-failure-scenarios)
 
 ---
 
@@ -68,25 +69,28 @@ POST /webhook/xendit
 ```
 internal/payment/
 ├── domain/           Pure entities and business rules. No infra imports.
-│   ├── transaction.go  PaymentTransaction entity + state machine
+│   ├── transaction.go  PaymentTransaction entity + state machine + IsValid()
 │   ├── event.go        WebhookEvent entity + processing states
 │   ├── ledger.go       LedgerEntry, LedgerJournal, double-entry validation
 │   ├── payout.go       Payout entity
+│   ├── settlement.go   MerchantSettlementSnapshot entity
+│   ├── balance.go      Balance struct (settled + pending breakdown)
 │   └── errors.go       All typed domain errors
 │
 ├── repository/       PostgreSQL persistence (pgx/v5).
 │   ├── db.go           DBTX interface, TxRunner, context-based tx propagation
-│   ├── transaction.go  PaymentTransaction CRUD + FOR UPDATE queries
+│   ├── transaction.go  PaymentTransaction CRUD + FOR UPDATE queries + keyset pagination
 │   ├── event.go        WebhookEvent CRUD + status management
 │   ├── ledger.go       Append-only ledger writes + balance queries
 │   ├── payout.go       Payout CRUD
+│   ├── settlement.go   MerchantSettlementSnapshot upsert + lookup
 │   ├── idempotency.go  Idempotency key management
 │   └── helpers.go      Shared scan/marshal helpers
 │
 ├── provider/         Payment gateway abstraction.
-│   ├── interface.go    PaymentProvider interface (create invoice, refund, payout, parse webhook)
+│   ├── interface.go    PaymentProvider + TransactionSyncer interfaces
 │   └── xendit/
-│       ├── provider.go  Xendit HTTP client implementation
+│       ├── provider.go  Xendit HTTP client (implements both interfaces)
 │       ├── mapper.go    Xendit DTO ↔ domain type conversion
 │       └── signature.go Webhook token validation
 │
@@ -100,12 +104,13 @@ internal/payment/
 │   └── parse.go      Raw payload field extraction
 │
 ├── service/
-│   ├── payment.go    CreatePayment, GetPayment use cases
+│   ├── payment.go    CreatePayment, GetPayment, RefreshPayment, ListTransactions, GetMerchantBalance
 │   └── payout.go     CreatePayout, DispatchPayout use cases
 │
 ├── jobs/
-│   ├── expire_payments.go  Periodic job: expire stale invoices
-│   └── retry_webhooks.go   Periodic job: replay failed webhook events
+│   ├── expire_payments.go    Periodic job: expire stale invoices
+│   ├── retry_webhooks.go     Periodic job: replay failed webhook events
+│   └── sync_settlement.go    Nightly job: reconcile Xendit transactions + upsert snapshots
 │
 ├── controller.go     HTTP handlers + route registration
 ├── model.go          XenPlatform account models (legacy)
@@ -151,21 +156,29 @@ All monetary amounts are integers in the **smallest currency unit** (IDR has no 
            └──────────┘
 ```
 
-`settled` is a valid state (reachable from `paid`) reserved for future use when a settlement flow is finalised.
+`settled` is reachable from `paid`. The nightly settlement sync job transitions paid transactions to `settled` once Xendit confirms `settlement_status = SETTLED` via `GET /transactions`.
 
 Terminal states (`expired`, `failed`, `refunded`, `voided`) accept no further transitions. Attempting one returns `ErrInvalidStatusTransition`.
 
 Returning `ErrAlreadyInState` means the event was already applied — callers treat this as a no-op, not a failure. This is how idempotency is enforced at the domain level.
 
+`PaymentStatus.IsValid()` returns `true` for any status in the state machine. The list-transactions API uses this to validate the `status` query parameter and reject unknown values with a 400.
+
 ### Amount Fields
 
-| Field            | Meaning                                |
-|------------------|----------------------------------------|
-| `amount`         | Gross amount paid by the customer      |
-| `platform_fee`   | Fee kept by the platform               |
-| `merchant_amount`| `amount - platform_fee` (paid to merchant) |
+| Field                  | Meaning                                        | When populated |
+|------------------------|------------------------------------------------|----------------|
+| `amount`               | Gross amount paid by the customer              | At creation |
+| `platform_fee`         | Fee kept by the platform                       | At creation |
+| `merchant_amount`      | `amount - platform_fee` (net to merchant)      | At creation |
+| `xendit_fee`           | Xendit's processing fee                        | After settlement sync |
+| `vat`                  | VAT on the Xendit fee                          | After settlement sync |
+| `xendit_withholding_tax` | Xendit's withholding tax                     | After settlement sync |
+| `third_party_wht`      | Third-party withholding tax                    | After settlement sync |
 
 The DB enforces `merchant_amount + platform_fee = amount` as a check constraint. The domain `Validate()` method checks this before writing any ledger entry.
+
+Fee fields (`xendit_fee`, `vat`, etc.) are backfilled by the nightly settlement sync job — they are always `0` until the job runs and matches the transaction to a Xendit `GET /transactions` record.
 
 ---
 
@@ -538,18 +551,121 @@ If an event fails all asynq retries AND the retry job cannot re-enqueue it, call
 
 Jobs are registered as asynq periodic tasks via the scheduler in `http/main.go`. They run inside the same process as the HTTP server.
 
-| Task name                      | Schedule   | What it does |
-|-------------------------------|------------|--------------|
-| `payment:jobs:expire_payments` | every 5m   | Finds `awaiting_payment` transactions past `expires_at`, transitions them to `expired`. Uses `SKIP LOCKED` so multiple instances don't contend. |
-| `payment:jobs:retry_webhooks`  | every 10m  | Re-enqueues up to 50 `failed` webhook events. |
+| Task name                        | Schedule         | What it does |
+|----------------------------------|------------------|--------------|
+| `payment:jobs:expire_payments`   | every 5m         | Finds `awaiting_payment` transactions past `expires_at`, transitions them to `expired`. Uses `SKIP LOCKED` so multiple instances don't contend. |
+| `payment:jobs:retry_webhooks`    | every 10m        | Re-enqueues up to 50 `failed` webhook events. |
+| `payment:jobs:sync_settlement`   | daily at 1 AM WIB (18:00 UTC) | Calls Xendit `GET /transactions`, reconciles fee breakdowns, transitions `paid → settled`. See [Section 11](#11-settlement-sync). |
 
-Both jobs are idempotent. Running them multiple times in quick succession is safe.
+All jobs are idempotent. Running them multiple times in quick succession is safe.
 
 ---
 
-## 11. API Reference
+## 11. Settlement Sync
+
+### Why it exists
+
+Xendit does not send a webhook when a payment settles. The only way to know that funds have moved from "collected" to "settled" (and to get the exact fee breakdown) is to poll `GET /transactions` on the Xendit API.
+
+The settlement sync job runs **nightly at 1 AM WIB (18:00 UTC)** and does two things:
+1. **Reconciles individual transactions** — for every `paid` transaction where Xendit now reports `settlement_status = SETTLED`, it transitions the transaction to `settled` and backfills the fee breakdown (`xendit_fee`, `vat`, `xendit_withholding_tax`, `third_party_wht`, `estimated_settlement_time`).
+2. **Updates the merchant snapshot** — re-aggregates all `paid` transactions for the tenant into `merchant_settlement_snapshots`, giving an instant read on pending balance without scanning the full transaction table on every balance request.
+
+### How it works
+
+```
+SyncSettlementJob.Run()
+    │
+    ├─ ListDistinctXenditAccounts()   ← find all tenants with a xendit_account_id
+    │
+    └─ for each (tenant_id, xendit_account_id):
+           syncTenant(ctx, tenant_id, xendit_account_id)
+                │
+                ├─ Determine since window
+                │   snapshot exists → use snapshot.last_synced_at (avoid refetching all history)
+                │   no snapshot yet → use 30 days ago as a safe bootstrap window
+                │
+                ├─ Paginate Xendit GET /transactions?types=PAYMENT&cashflow=MONEY_IN
+                │   Filters: after_created_at=since, limit=100, after_id=<cursor>
+                │   Continue until HasMore=false
+                │
+                ├─ for each ProviderTransaction:
+                │       match by product_data.payment_session_id → provider_invoice_id
+                │       if settlement_status = SETTLED:
+                │           backfill fee fields (xendit_fee, vat, withholding, etc.)
+                │           transition paid → settled (skip if already settled or any error)
+                │           update row (optimistic lock — ErrVersionConflict skipped, retried next night)
+                │
+                ├─ SumPendingSettlement(tenant_id)
+                │   aggregate: SUM(merchant_amount), SUM(platform_fee), SUM(xendit_fee),
+                │               SUM(vat), SUM(xendit_withholding_tax + third_party_wht)
+                │   WHERE status = 'paid'   ← paid-but-not-yet-settled
+                │
+                └─ Upsert merchant_settlement_snapshots
+                    ON CONFLICT (tenant_id) DO UPDATE SET
+                        pending_balance, pending_platform_fee, pending_xendit_fee,
+                        pending_vat, pending_withholding, last_synced_at, updated_at
+```
+
+### TransactionSyncer interface
+
+Only the `SyncSettlementJob` depends on Xendit's `GET /transactions` API. This is abstracted behind a separate `TransactionSyncer` interface (in `provider/interface.go`) so the sync job is not coupled to the full `PaymentProvider` interface and a different provider can implement it independently:
+
+```go
+type TransactionSyncer interface {
+    ListTransactions(ctx context.Context, req ListTransactionsRequest) (*ListTransactionsResult, error)
+}
+```
+
+The Xendit `Provider` implements both `PaymentProvider` and `TransactionSyncer`.
+
+### merchant_settlement_snapshots
+
+One row per tenant. Updated atomically by the sync job via `ON CONFLICT (tenant_id) DO UPDATE`. This is a **cache / summary**, not a ledger. The authoritative fee breakdown lives on each `payment_transactions` row. If the snapshot is wrong, rerunning the job recalculates it.
+
+| Column               | Meaning |
+|----------------------|---------|
+| `pending_balance`    | SUM of `merchant_amount` for `paid` (not yet settled) transactions |
+| `pending_platform_fee` | SUM of `platform_fee` for the same transactions |
+| `pending_xendit_fee` | SUM of `xendit_fee` (backfilled from Xendit) |
+| `pending_vat`        | SUM of `vat` |
+| `pending_withholding`| SUM of `xendit_withholding_tax + third_party_wht` |
+| `last_synced_at`     | When the job last ran for this tenant |
+
+### What the balance endpoint returns
+
+`GET /api/payments/balance` (see [Section 12](#12-api-reference)) combines:
+- **settled_amount** — live balance from Xendit `GET /balance` (real-time API call)
+- **pending_*** fields — read from `merchant_settlement_snapshots` (snapshot from last nightly run)
+- **last_synced_at** — when the snapshot was last refreshed; `null` means the job has never run for this tenant
+
+### Failure handling
+
+| Scenario | Behaviour |
+|---|---|
+| Transaction already settled by a concurrent webhook | `ErrVersionConflict` → skip that transaction; the row is already correct |
+| Xendit API error during pagination | Job logs error, stops the tenant sync, continues with next tenant |
+| Snapshot upsert fails | Logged at ERROR; snapshot is stale but transaction rows are already updated |
+| Job crashes mid-run | Safe to restart; `since` is read from the snapshot so the next run re-scans from the same window |
+
+---
+
+## 12. API Reference
 
 All authenticated endpoints require the `X-API-KEY` header. Multi-tenant endpoints require `X-Tenant-ID` (integer).
+
+### Endpoint summary
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/payments/` | Create Xendit payment (returns checkout URL) |
+| `POST` | `/api/payments/manual` | Create manual payment (no external call) |
+| `GET`  | `/api/payments/` | List transactions (cursor paginated, filterable) |
+| `GET`  | `/api/payments/:id` | Get single transaction |
+| `POST` | `/api/payments/:id/refresh` | Refresh status from Xendit for one transaction |
+| `GET`  | `/api/payments/balance` | Merchant balance (settled + pending breakdown) |
+| `POST` | `/api/payments/webhooks/:event_id/replay` | Replay a stored webhook event |
+| `POST` | `/webhook/xendit` | Xendit webhook callback (public, no auth) |
 
 ### Create payment (Xendit)
 
@@ -675,7 +791,7 @@ Returns `409 Conflict` if an `idempotency_key` collision occurs.
 ### List transactions
 
 ```http
-GET /api/payments/?limit=20&cursor=<token>&status=paid,settled
+GET /api/payments/?limit=20&cursor=<token>&status=paid,settled&date_from=2026-05-01&date_to=2026-05-31
 X-API-KEY: <key>
 X-Tenant-ID: 42
 ```
@@ -684,7 +800,11 @@ X-Tenant-ID: 42
 |---|---|---|
 | `limit` | `20` | Page size (max 100) |
 | `cursor` | _(empty)_ | Opaque token from the previous response's `next_cursor` |
-| `status` | _(all)_ | Comma-separated filter e.g. `paid,settled` |
+| `status` | _(all)_ | Comma-separated filter; valid values: `pending`, `awaiting_payment`, `paid`, `settled`, `refunding`, `refunded`, `expired`, `failed`, `voided`. Returns `400` on unknown value. |
+| `date_from` | _(none)_ | Filter to transactions created on or after this date (`YYYY-MM-DD`, inclusive, interpreted as start of day UTC) |
+| `date_to` | _(none)_ | Filter to transactions created before or on this date (`YYYY-MM-DD`, inclusive, interpreted as end of day UTC — technically `date_to + 1 day` exclusive) |
+
+Date filters and cursor pagination are compatible — the cursor narrows within whatever date window is set.
 
 Response `200 OK`:
 ```json
@@ -700,6 +820,11 @@ Response `200 OK`:
 
 When `has_more` is `false`, `next_cursor` is empty and there are no further pages.
 
+Error `400 Bad Request` — invalid status value:
+```json
+{ "status": "Bad Request", "error": "invalid status: foobar" }
+```
+
 ### Get payment
 
 ```http
@@ -707,6 +832,73 @@ GET /api/payments/{id}
 X-API-KEY: <key>
 X-Tenant-ID: 42
 ```
+
+Returns `404` if the ID does not exist or belongs to a different tenant.
+
+### Refresh payment
+
+Fetches the latest state from Xendit for a single transaction and updates the DB if status changed. Intended for use when a user clicks a "refresh" button in the UI.
+
+```http
+POST /api/payments/{id}/refresh
+X-API-KEY: <key>
+X-Tenant-ID: 42
+```
+
+No request body required.
+
+Response `200 OK` — returns the current transaction (whether or not status changed):
+```json
+{
+  "status": "OK",
+  "data": { ...same fields as Get payment... }
+}
+```
+
+**Short-circuits (returns DB state immediately, no Xendit call) when:**
+- Transaction is in a terminal state (`expired`, `failed`, `refunded`, `voided`)
+- `provider_invoice_id` starts with `manual-` (no Xendit session to fetch)
+
+**Concurrent update handling:** if a webhook lands and updates the transaction between our DB read and our write, the optimistic lock conflict is caught and the fresh DB state is returned rather than failing.
+
+Note: the refresh endpoint does **not** set `payment_method` because `GET /sessions/{id}` doesn't return channel code. If `payment_method` is needed, wait for the `payment_session.completed` webhook.
+
+### Merchant balance
+
+```http
+GET /api/payments/balance
+X-API-KEY: <key>
+X-Tenant-ID: 42
+X-Xendit-Account-ID: xnd_acct_merchant_123
+```
+
+Response `200 OK`:
+```json
+{
+  "status": "OK",
+  "data": {
+    "settled_amount":       9500000,
+    "pending_balance":      2000000,
+    "pending_platform_fee":   40000,
+    "pending_xendit_fee":     15000,
+    "pending_vat":             1650,
+    "pending_withholding":        0,
+    "last_synced_at":      "2026-05-27T18:00:00Z"
+  }
+}
+```
+
+| Field | Source | Description |
+|---|---|---|
+| `settled_amount` | Xendit `GET /balance` (live) | Funds available for withdrawal in the merchant's sub-account |
+| `pending_balance` | `merchant_settlement_snapshots` | SUM of `merchant_amount` for `paid` (not yet settled) transactions |
+| `pending_platform_fee` | Snapshot | Platform fee portion of pending transactions |
+| `pending_xendit_fee` | Snapshot | Xendit's processing fee on pending transactions (backfilled by nightly sync) |
+| `pending_vat` | Snapshot | VAT on the Xendit fee |
+| `pending_withholding` | Snapshot | Withholding taxes on pending transactions |
+| `last_synced_at` | Snapshot | When the nightly settlement sync last ran; `null` if it has never run |
+
+The `settled_amount` is always fresh (real-time Xendit API call). The pending breakdown is from the last nightly snapshot — it reflects the state as of 1 AM WIB.
 
 ### Replay webhook event
 
@@ -849,16 +1041,21 @@ Primary entity. Tracks one payment from creation to settlement.
 | `provider_payment_id`| TEXT nullable    | Xendit `payment_id` (py-xxx); populated on `payment.capture` |
 | `checkout_url`       | TEXT nullable    | Xendit `payment_link_url`; returned to the caller on create so the buyer can be redirected |
 | `xendit_account_id`  | TEXT nullable    | Merchant's Xendit sub-account ID; sent as `for-user-id` header on API calls and as transfer destination |
-| `payment_method`     | TEXT nullable    | `channel_code` from the capture webhook (e.g. `QRIS`, `BCA`) |
-| `payment_channel`    | TEXT nullable    | Same as `payment_method` (channel_code) |
+| `payment_method`     | TEXT nullable    | `channel_code` from the capture webhook (e.g. `QRIS`, `BCA`); empty until payment is confirmed |
+| `payment_channel`    | TEXT nullable    | Same as `payment_method` |
 | `amount`             | BIGINT           | Gross amount in smallest currency unit |
 | `platform_fee`       | BIGINT           | Always: `merchant_amount + platform_fee = amount` |
 | `merchant_amount`    | BIGINT           | |
 | `status`             | payment_status   | State machine enum |
 | `version`            | INTEGER          | Optimistic lock version; increments on every write |
 | `expires_at`         | TIMESTAMPTZ NULL | Session expiry |
-| `paid_at`            | TIMESTAMPTZ NULL | Set on `payment.capture` |
-| `settled_at`         | TIMESTAMPTZ NULL | Reserved for future settlement flow |
+| `paid_at`            | TIMESTAMPTZ NULL | Set on `payment.capture` or `payment_session.completed` |
+| `settled_at`         | TIMESTAMPTZ NULL | Set by settlement sync job when Xendit confirms `settlement_status = SETTLED` |
+| `xendit_fee`         | BIGINT           | Xendit's processing fee; `0` until settlement sync runs |
+| `vat`                | BIGINT           | VAT on the Xendit fee; `0` until settlement sync runs |
+| `xendit_withholding_tax` | BIGINT       | Xendit's withholding tax; `0` until settlement sync runs |
+| `third_party_wht`    | BIGINT           | Third-party withholding tax; `0` until settlement sync runs |
+| `estimated_settlement_time` | TIMESTAMPTZ NULL | Xendit's estimated settlement date; backfilled by sync |
 
 ### payment_webhook_events
 
@@ -896,6 +1093,24 @@ One row per merchant disbursement. `tenant_id` is `BIGINT`. `for_user_id` stores
 ### payment_idempotency_keys
 
 Short-lived (24h TTL) request deduplication store for the payment creation API.
+
+### merchant_settlement_snapshots
+
+One row per tenant. Upserted by the nightly settlement sync job. Acts as a read-through cache for the balance endpoint — avoids scanning the full `payment_transactions` table on every request.
+
+| Column               | Type          | Notes |
+|----------------------|---------------|-------|
+| `id`                 | UUID PK       | |
+| `tenant_id`          | BIGINT UNIQUE | One row per tenant |
+| `xendit_account_id`  | TEXT          | Merchant's Xendit sub-account ID (used as `for-user-id` header) |
+| `pending_balance`    | BIGINT        | SUM of `merchant_amount` for `status = 'paid'` transactions |
+| `pending_platform_fee` | BIGINT      | SUM of `platform_fee` for `status = 'paid'` transactions |
+| `pending_xendit_fee` | BIGINT        | SUM of `xendit_fee` (backfilled from Xendit `GET /transactions`) |
+| `pending_vat`        | BIGINT        | SUM of `vat` |
+| `pending_withholding`| BIGINT        | SUM of `xendit_withholding_tax + third_party_wht` |
+| `last_synced_at`     | TIMESTAMPTZ NULL | When the sync job last completed for this tenant; `null` means never synced |
+| `created_at`         | TIMESTAMPTZ   | |
+| `updated_at`         | TIMESTAMPTZ   | |
 
 ---
 

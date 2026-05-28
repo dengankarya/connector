@@ -15,19 +15,28 @@ type paymentDetails struct {
 func parsePaymentDetails(raw []byte) paymentDetails {
 	var envelope struct {
 		Data struct {
-			PaymentSessionID string `json:"payment_session_id"`
-			PaymentID        string `json:"payment_id"`
-			ChannelCode      string `json:"channel_code"`
-			FailureCode      string `json:"failure_code"`
+			PaymentSessionID       string   `json:"payment_session_id"`
+			PaymentID              string   `json:"payment_id"`
+			ChannelCode            string   `json:"channel_code"`
+			FailureCode            string   `json:"failure_code"`
+			AllowedPaymentChannels []string `json:"allowed_payment_channels"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return paymentDetails{}
 	}
+
+	// payment_session.completed does not carry channel_code — fall back to
+	// allowed_payment_channels[0] since callers always send exactly one channel.
+	channelCode := envelope.Data.ChannelCode
+	if channelCode == "" && len(envelope.Data.AllowedPaymentChannels) == 1 {
+		channelCode = envelope.Data.AllowedPaymentChannels[0]
+	}
+
 	return paymentDetails{
 		PaymentSessionID: envelope.Data.PaymentSessionID,
 		PaymentID:        envelope.Data.PaymentID,
-		ChannelCode:      envelope.Data.ChannelCode,
+		ChannelCode:      channelCode,
 		FailureCode:      envelope.Data.FailureCode,
 	}
 }

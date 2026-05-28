@@ -3,7 +3,7 @@ package main
 import (
 	"net/http"
 
-	"github.com/dengankarya/overwatch/common"
+	"github.com/dengankarya/connector/common"
 	"github.com/gofiber/fiber/v3"
 )
 

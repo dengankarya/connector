@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dengankarya/connector/internal/payment/domain"
+	"github.com/dengankarya/connector/internal/payment/ledger"
+	"github.com/dengankarya/connector/internal/payment/provider"
+	"github.com/dengankarya/connector/internal/payment/repository"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
-	"github.com/dengankarya/overwatch/internal/payment/domain"
-	"github.com/dengankarya/overwatch/internal/payment/ledger"
-	"github.com/dengankarya/overwatch/internal/payment/provider"
-	"github.com/dengankarya/overwatch/internal/payment/repository"
 )
 
 // WebhookForwarder forwards the raw Xendit payload to an upstream app after processing.
@@ -21,20 +21,28 @@ type WebhookForwarder interface {
 	ForwardWebhook(ctx context.Context, payload []byte) error
 }
 
+// ShippingBalanceCreditor credits a merchant's shipping balance from the shipping_fee
+// portion of a paid payment. Must be called inside an existing DB transaction.
+// shipping/balance.Service satisfies this interface.
+type ShippingBalanceCreditor interface {
+	CreditFromPayment(ctx context.Context, tenantID int64, amount int64, currency string) error
+}
+
 // Processor orchestrates the full webhook processing pipeline.
 // Every step from lock → transition → ledger → mark-processed runs in one DB transaction.
 type Processor struct {
-	eventRepo *repository.WebhookEventRepository
-	txnRepo   *repository.TransactionRepository
-	ledger    *ledger.Service
-	txRunner  *repository.TxRunner
-	prov      provider.PaymentProvider
-	forwarder WebhookForwarder // optional; if nil forwarding is skipped
-	logger    *logrus.Logger
+	eventRepo        *repository.WebhookEventRepository
+	txnRepo          *repository.TransactionRepository
+	ledger           *ledger.Service
+	txRunner         *repository.TxRunner
+	prov             provider.PaymentProvider
+	forwarder        WebhookForwarder        // optional; if nil forwarding is skipped
+	shippingCreditor ShippingBalanceCreditor // optional; if nil shipping_fee credit is skipped
+	logger           *logrus.Logger
 }
 
 // NewProcessor creates a Processor with all required dependencies.
-// forwarder may be nil — forwarding is silently skipped when not configured.
+// forwarder and shippingCreditor may be nil — those steps are silently skipped when not configured.
 func NewProcessor(
 	eventRepo *repository.WebhookEventRepository,
 	txnRepo *repository.TransactionRepository,
@@ -42,16 +50,18 @@ func NewProcessor(
 	txRunner *repository.TxRunner,
 	prov provider.PaymentProvider,
 	forwarder WebhookForwarder,
+	shippingCreditor ShippingBalanceCreditor,
 	logger *logrus.Logger,
 ) *Processor {
 	return &Processor{
-		eventRepo: eventRepo,
-		txnRepo:   txnRepo,
-		ledger:    ledgerSvc,
-		txRunner:  txRunner,
-		prov:      prov,
-		forwarder: forwarder,
-		logger:    logger,
+		eventRepo:        eventRepo,
+		txnRepo:          txnRepo,
+		ledger:           ledgerSvc,
+		txRunner:         txRunner,
+		prov:             prov,
+		forwarder:        forwarder,
+		shippingCreditor: shippingCreditor,
+		logger:           logger,
 	}
 }
 
@@ -255,20 +265,48 @@ func (p *Processor) handle(ctx context.Context, event *domain.WebhookEvent, txn 
 func (p *Processor) handlePaid(ctx context.Context, event *domain.WebhookEvent, txn *domain.PaymentTransaction, log *logrus.Entry) error {
 	prevStatus := txn.Status
 
+	// Capture payment details from the parsed webhook payload regardless of whether
+	// we transition state — payment_session.completed has no channel_code, but
+	// payment.capture (fired shortly after) does. We must update payment_method even
+	// when the transaction is already paid (idempotent second event).
+	details := parsePaymentDetails(event.RawPayload)
+
+	alreadyPaid := false
 	if err := txn.TransitionTo(domain.StatusPaid); err != nil {
 		if errors.As(err, new(domain.ErrAlreadyInState)) {
+			alreadyPaid = true
+		} else {
+			return fmt.Errorf("transition to paid: %w", err)
+		}
+	}
+
+	if alreadyPaid {
+		// Only update if this event adds information we don't already have.
+		if details.ChannelCode == "" && details.PaymentID == "" {
 			log.WithField("status", txn.Status).Info("transaction already paid — idempotent")
 			return nil
 		}
-		return fmt.Errorf("transition to paid: %w", err)
+		// Backfill payment_channel / provider_payment_id from the richer event.
+		if details.ChannelCode != "" && txn.PaymentChannel == "" {
+			txn.PaymentChannel = details.ChannelCode
+		}
+		if details.PaymentID != "" && txn.ProviderPaymentID == "" {
+			txn.ProviderPaymentID = details.PaymentID
+		}
+		txn.Version++ // increment version so Update WHERE version = expected passes
+		if err := p.txnRepo.Update(ctx, txn); err != nil {
+			return fmt.Errorf("backfill payment details: %w", err)
+		}
+		log.WithFields(logrus.Fields{
+			"channel_code":        txn.PaymentMethod,
+			"provider_payment_id": txn.ProviderPaymentID,
+		}).Info("transaction already paid — backfilled payment details")
+		return nil
 	}
 
-	// Capture payment details from the parsed webhook payload.
-	details := parsePaymentDetails(event.RawPayload)
 	now := time.Now().UTC()
 	txn.PaidAt = &now
 	if details.ChannelCode != "" {
-		txn.PaymentMethod = details.ChannelCode
 		txn.PaymentChannel = details.ChannelCode
 	}
 	if details.PaymentID != "" {
@@ -283,10 +321,17 @@ func (p *Processor) handlePaid(ctx context.Context, event *domain.WebhookEvent, 
 		return fmt.Errorf("record payment ledger: %w", err)
 	}
 
+	if p.shippingCreditor != nil && txn.ShippingFee > 0 {
+		if err := p.shippingCreditor.CreditFromPayment(ctx, txn.TenantID, txn.ShippingFee, txn.Currency); err != nil {
+			return fmt.Errorf("credit shipping balance: %w", err)
+		}
+	}
+
 	log.WithFields(logrus.Fields{
 		"prev_status":         prevStatus,
 		"status":              txn.Status,
 		"amount":              txn.Amount,
+		"shipping_fee":        txn.ShippingFee,
 		"currency":            txn.Currency,
 		"channel_code":        txn.PaymentMethod,
 		"provider_payment_id": txn.ProviderPaymentID,

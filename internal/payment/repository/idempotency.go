@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dengankarya/connector/internal/payment/domain"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/dengankarya/overwatch/internal/payment/domain"
 )
 
 // IdempotencyRecord holds the cached outcome of a previously completed request.

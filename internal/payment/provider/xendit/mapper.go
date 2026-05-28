@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dengankarya/overwatch/internal/payment/provider"
+	"github.com/dengankarya/connector/internal/payment/provider"
 )
 
 // ─── outbound DTOs (Overwatch → Xendit) ──────────────────────────────────────
@@ -55,29 +55,19 @@ type createRefundDTO struct {
 	ReferenceID      string `json:"reference_id,omitempty"`
 }
 
-type createTransferDTO struct {
-	Reference         string `json:"reference"`
-	Amount            int64  `json:"amount"`
-	DestinationUserID string `json:"destination_user_id"`
-}
-
-type transferResponseDTO struct {
-	TransferID string `json:"transfer_id"`
-	Status     string `json:"status"`
-}
-
 // ─── inbound DTOs (Xendit → Overwatch) ───────────────────────────────────────
 
 // sessionResponseDTO maps the response from POST /sessions and GET /sessions/{id}.
 type sessionResponseDTO struct {
-	PaymentSessionID string     `json:"payment_session_id"`
-	ReferenceID      string     `json:"reference_id"`
-	Status           string     `json:"status"`
-	Currency         string     `json:"currency"`
-	Amount           float64    `json:"amount"`
-	PaymentLinkURL   string     `json:"payment_link_url"`
-	ExpiresAt        *time.Time `json:"expires_at"`
-	Created          string     `json:"created"`
+	PaymentSessionID       string     `json:"payment_session_id"`
+	ReferenceID            string     `json:"reference_id"`
+	Status                 string     `json:"status"`
+	Currency               string     `json:"currency"`
+	Amount                 float64    `json:"amount"`
+	PaymentLinkURL         string     `json:"payment_link_url"`
+	ExpiresAt              *time.Time `json:"expires_at"`
+	Created                string     `json:"created"`
+	AllowedPaymentChannels []string   `json:"allowed_payment_channels"`
 }
 
 type payoutResponseDTO struct {
@@ -125,6 +115,13 @@ func toCreateSessionDTO(req provider.CreateInvoiceRequest) createSessionDTO {
 		country = "ID"
 	}
 
+	// Preserve caller-provided metadata but always include Xendit-visible fields
+	// so the Xendit dashboard can be filtered by these values.
+	meta := make(map[string]any, len(req.Metadata))
+	for k, v := range req.Metadata {
+		meta[k] = v
+	}
+
 	dto := createSessionDTO{
 		ReferenceID:            req.ExternalID,
 		Currency:               req.Currency,
@@ -138,7 +135,7 @@ func toCreateSessionDTO(req provider.CreateInvoiceRequest) createSessionDTO {
 		ExpiresAt:              req.ExpiresAt,
 		SuccessReturnURL:       req.SuccessReturnURL,
 		CancelReturnURL:        req.CancelReturnURL,
-		Metadata:               req.Metadata,
+		Metadata:               meta,
 	}
 
 	if req.CustomerEmail != "" && req.CustomerName != "" && req.CustomerReferenceID != "" {
@@ -157,12 +154,13 @@ func toCreateSessionDTO(req provider.CreateInvoiceRequest) createSessionDTO {
 
 func fromSessionResponseDTO(dto sessionResponseDTO) *provider.Invoice {
 	return &provider.Invoice{
-		ProviderInvoiceID: dto.PaymentSessionID,
-		CheckoutURL:       dto.PaymentLinkURL,
-		Status:            dto.Status,
-		Amount:            int64(dto.Amount),
-		Currency:          dto.Currency,
-		ExpiresAt:         dto.ExpiresAt,
+		ProviderInvoiceID:      dto.PaymentSessionID,
+		CheckoutURL:            dto.PaymentLinkURL,
+		Status:                 dto.Status,
+		Amount:                 int64(dto.Amount),
+		Currency:               dto.Currency,
+		ExpiresAt:              dto.ExpiresAt,
+		AllowedPaymentChannels: dto.AllowedPaymentChannels,
 	}
 }
 

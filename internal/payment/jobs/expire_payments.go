@@ -5,9 +5,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/dengankarya/connector/internal/payment/domain"
+	"github.com/dengankarya/connector/internal/payment/repository"
 	"github.com/sirupsen/logrus"
-	"github.com/dengankarya/overwatch/internal/payment/domain"
-	"github.com/dengankarya/overwatch/internal/payment/repository"
 )
 
 const expirePaymentsBatchSize = 100

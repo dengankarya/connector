@@ -15,8 +15,10 @@ type Configuration struct {
 
 	DatabaseDSN string `env:"DATABASE_DSN"`
 
-	BiteshipAPIKey  string `env:"BITESHIP_API_KEY"`
-	BiteshipBaseURL string `env:"BITESHIP_BASE_URL"`
+	BiteshipAPIKey                string `env:"BITESHIP_API_KEY"`
+	BiteshipBaseURL               string `env:"BITESHIP_BASE_URL"`
+	BiteshipWebhookSignatureKey   string `env:"BITESHIP_WEBHOOK_SIGNATURE_KEY"`
+	BiteshipWebhookSignatureValue string `env:"BITESHIP_WEBHOOK_SIGNATURE_VALUE"`
 
 	WilayahBaseURL string `env:"WILAYAH_BASE_URL,notEmpty" envDefault:"https://wilayah.id"`
 
@@ -28,6 +30,9 @@ type Configuration struct {
 	TokokaryaAPIKey string `env:"TOKOKARYA_API_KEY"`
 
 	RedisURL string `env:"REDIS_URL,notEmpty" envDefault:"redis://localhost:6379"`
+
+	SwaggerUsername string `env:"SWAGGER_USERNAME"`
+	SwaggerPassword string `env:"SWAGGER_PASSWORD"`
 }
 
 func (c Configuration) IsThisRequestAuthenticated(apiKey string) bool {

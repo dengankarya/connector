@@ -64,7 +64,7 @@ func NewTask(eventID uuid.UUID) (*asynq.Task, []asynq.Option) {
 	opts := []asynq.Option{
 		asynq.MaxRetry(5),
 		asynq.Queue("webhooks"),
-		asynq.Timeout(30 * 1e9), // 30s in nanoseconds (time.Duration)
+		asynq.Timeout(30 * 1e9),              // 30s in nanoseconds (time.Duration)
 		asynq.Retention(7 * 24 * 3600 * 1e9), // 7 days
 	}
 	return asynq.NewTask(TaskProcessWebhookEvent, payload), opts

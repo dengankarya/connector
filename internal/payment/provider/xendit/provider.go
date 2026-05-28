@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 	"time"
 
-	"github.com/dengankarya/overwatch/internal/payment/provider"
+	"github.com/dengankarya/connector/internal/payment/provider"
 )
 
 const (
@@ -16,7 +18,9 @@ const (
 	xenditAPIVersion = "2024-11-11"
 )
 
-// Provider implements provider.PaymentProvider for Xendit.
+// Provider implements provider.PaymentProvider for Xendit using the master account.
+// All requests go to the platform's master Xendit account — no for-user-id header.
+// Merchant attribution is carried in Xendit invoice metadata (tenant_id key).
 type Provider struct {
 	apiKey       string
 	webhookToken string
@@ -50,29 +54,29 @@ func (p *Provider) CreateInvoice(ctx context.Context, req provider.CreateInvoice
 	}
 
 	var resp sessionResponseDTO
-	if err := p.post(ctx, "/sessions", body, req.ForUserID, &resp); err != nil {
+	if err := p.post(ctx, "/sessions", body, &resp); err != nil {
 		return nil, fmt.Errorf("xendit: create session: %w", err)
 	}
 	return fromSessionResponseDTO(resp), nil
 }
 
 // GetInvoice fetches the current state of a Xendit Payment Session (GET /sessions/{id}).
-func (p *Provider) GetInvoice(ctx context.Context, sessionID, forUserID string) (*provider.Invoice, error) {
+func (p *Provider) GetInvoice(ctx context.Context, sessionID string) (*provider.Invoice, error) {
 	var resp sessionResponseDTO
-	if err := p.get(ctx, "/sessions/"+sessionID, forUserID, &resp); err != nil {
+	if err := p.get(ctx, "/sessions/"+sessionID, &resp); err != nil {
 		return nil, fmt.Errorf("xendit: get session %s: %w", sessionID, err)
 	}
 	return fromSessionResponseDTO(resp), nil
 }
 
 // CancelInvoice cancels an active Xendit Payment Session (POST /sessions/{id}/cancel).
-func (p *Provider) CancelInvoice(ctx context.Context, sessionID, forUserID string) error {
+func (p *Provider) CancelInvoice(ctx context.Context, sessionID string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		p.baseURL+"/sessions/"+sessionID+"/cancel", nil)
 	if err != nil {
 		return fmt.Errorf("xendit: build cancel session request: %w", err)
 	}
-	p.setHeaders(req, forUserID)
+	p.setHeaders(req)
 
 	resp, err := p.http.Do(req)
 	if err != nil {
@@ -100,7 +104,7 @@ func (p *Provider) CreateRefund(ctx context.Context, req provider.CreateRefundRe
 	}
 
 	var resp refundResponseDTO
-	if err := p.post(ctx, "/refunds", body, req.ForUserID, &resp); err != nil {
+	if err := p.post(ctx, "/refunds", body, &resp); err != nil {
 		return nil, fmt.Errorf("xendit: create refund: %w", err)
 	}
 	return &provider.Refund{
@@ -115,31 +119,8 @@ func (p *Provider) ParseWebhookEvent(_ context.Context, payload []byte) (*provid
 	return parseWebhookPayload(payload)
 }
 
-// Transfer moves funds from the platform account to a merchant sub-account.
-// Calls POST /transfers on the XenPlatform API.
-func (p *Provider) Transfer(ctx context.Context, req provider.TransferRequest) (*provider.TransferResponse, error) {
-	dto := createTransferDTO{
-		Reference:         req.Reference,
-		Amount:            req.Amount,
-		DestinationUserID: req.DestinationUserID,
-	}
-	body, err := json.Marshal(dto)
-	if err != nil {
-		return nil, fmt.Errorf("xendit: marshal transfer: %w", err)
-	}
-
-	var resp transferResponseDTO
-	// Transfers are platform-level — no for-user-id header.
-	if err := p.post(ctx, "/transfers", body, "", &resp); err != nil {
-		return nil, fmt.Errorf("xendit: transfer to %s: %w", req.DestinationUserID, err)
-	}
-	return &provider.TransferResponse{
-		ProviderTransferID: resp.TransferID,
-		Status:             resp.Status,
-	}, nil
-}
-
-// CreatePayout initiates a Xendit disbursement.
+// CreatePayout initiates a Xendit disbursement from the platform master account
+// to a merchant's registered bank account.
 func (p *Provider) CreatePayout(ctx context.Context, req provider.CreatePayoutRequest) (*provider.Payout, error) {
 	dto := createPayoutDTO{
 		ExternalID:    req.ExternalID,
@@ -155,7 +136,7 @@ func (p *Provider) CreatePayout(ctx context.Context, req provider.CreatePayoutRe
 	}
 
 	var resp payoutResponseDTO
-	if err := p.post(ctx, "/disbursements", body, req.ForUserID, &resp); err != nil {
+	if err := p.post(ctx, "/disbursements", body, &resp); err != nil {
 		return nil, fmt.Errorf("xendit: create payout: %w", err)
 	}
 	return &provider.Payout{
@@ -165,51 +146,122 @@ func (p *Provider) CreatePayout(ctx context.Context, req provider.CreatePayoutRe
 	}, nil
 }
 
-// GetBalance fetches the available balance for the given sub-account (or the platform account
-// when ForUserID is empty). Calls GET /balance on the Xendit API.
-func (p *Provider) GetBalance(ctx context.Context, req provider.BalanceRequest) (*provider.Balance, error) {
-	var resp struct {
-		Balance int `json:"balance"`
+// ListTransactions fetches a page of MONEY_IN transactions from Xendit.
+// Used by the settlement sync job to reconcile settlement_status and fee breakdowns.
+// Implements provider.TransactionSyncer.
+func (p *Provider) ListTransactions(ctx context.Context, req provider.ListTransactionsRequest) (*provider.ListTransactionsResult, error) {
+	limit := req.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 100
 	}
-	if err := p.get(ctx, "/balance", req.ForUserID, &resp); err != nil {
-		return nil, fmt.Errorf("xendit: get balance: %w", err)
+
+	params := url.Values{}
+	params.Set("types", "PAYMENT")
+	params.Set("cashflow", "MONEY_IN")
+	params.Set("limit", strconv.Itoa(limit))
+	if !req.CreatedGTE.IsZero() {
+		params.Set("after_created_at", req.CreatedGTE.UTC().Format(time.RFC3339))
 	}
-	return &provider.Balance{Balance: resp.Balance}, nil
+	if req.AfterID != "" {
+		params.Set("after_id", req.AfterID)
+	}
+
+	var resp listTransactionsResponseDTO
+	if err := p.getWithParams(ctx, "/transactions", params, &resp); err != nil {
+		return nil, fmt.Errorf("xendit: list transactions: %w", err)
+	}
+
+	result := &provider.ListTransactionsResult{
+		HasMore: resp.HasMore,
+	}
+	for _, dto := range resp.Data {
+		t := provider.ProviderTransaction{
+			ID:                      dto.ID,
+			SettlementStatus:        dto.SettlementStatus,
+			XenditFee:               dto.Fee.XenditFee,
+			VAT:                     dto.Fee.ValueAddedTax,
+			XenditWithholdingTax:    dto.Fee.XenditWithholdingTax,
+			ThirdPartyWHT:           dto.Fee.ThirdPartyWithholdingTax,
+			EstimatedSettlementTime: dto.EstimatedSettlementTime,
+			PaymentSessionID:        dto.ProductData.PaymentSessionID,
+			Created:                 dto.Created,
+		}
+		result.Transactions = append(result.Transactions, t)
+		result.LastID = dto.ID
+	}
+
+	return result, nil
 }
 
-// func (p *Provider) GetTransactions(ctx context.Context, req provider.GetTransactionsRequest)
+// ── DTOs for GET /transactions ────────────────────────────────────────────────
+
+type listTransactionsResponseDTO struct {
+	HasMore bool                   `json:"has_more"`
+	Data    []xenditTransactionDTO `json:"data"`
+}
+
+type xenditTransactionDTO struct {
+	ID                      string                  `json:"id"`
+	Type                    string                  `json:"type"`
+	Status                  string                  `json:"status"`
+	SettlementStatus        string                  `json:"settlement_status"`
+	Currency                string                  `json:"currency"`
+	Amount                  int64                   `json:"amount"`
+	Fee                     xenditTransactionFeeDTO `json:"fee"`
+	EstimatedSettlementTime *time.Time              `json:"estimated_settlement_time"`
+	ProductData             xenditProductDataDTO    `json:"product_data"`
+	Created                 time.Time               `json:"created"`
+}
+
+type xenditTransactionFeeDTO struct {
+	XenditFee                int64 `json:"xendit_fee"`
+	ValueAddedTax            int64 `json:"value_added_tax"`
+	XenditWithholdingTax     int64 `json:"xendit_withholding_tax"`
+	ThirdPartyWithholdingTax int64 `json:"third_party_withholding_tax"`
+}
+
+type xenditProductDataDTO struct {
+	PaymentSessionID string `json:"payment_session_id"`
+}
 
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────
 
-func (p *Provider) post(ctx context.Context, path string, body []byte, forUserID string, out any) error {
+func (p *Provider) post(ctx context.Context, path string, body []byte, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	p.setHeaders(req, forUserID)
+	p.setHeaders(req)
 	return p.do(req, out)
 }
 
-func (p *Provider) get(ctx context.Context, path string, forUserID string, out any) error {
+func (p *Provider) get(ctx context.Context, path string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+path, nil)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	p.setHeaders(req, forUserID)
+	p.setHeaders(req)
 	return p.do(req, out)
 }
 
-// setHeaders sets authentication and content-type headers.
-// forUserID is the Xendit sub-account business ID; when non-empty the request
-// is scoped to that sub-account via the for-user-id header.
-func (p *Provider) setHeaders(req *http.Request, forUserID string) {
+func (p *Provider) getWithParams(ctx context.Context, path string, params url.Values, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+path, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	if len(params) > 0 {
+		req.URL.RawQuery = params.Encode()
+	}
+	p.setHeaders(req)
+	return p.do(req, out)
+}
+
+// setHeaders sets authentication and content-type headers for the master account.
+func (p *Provider) setHeaders(req *http.Request) {
 	req.SetBasicAuth(p.apiKey, "")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("api-version", xenditAPIVersion)
-	if forUserID != "" {
-		req.Header.Set("for-user-id", forUserID)
-	}
 }
 
 func (p *Provider) do(req *http.Request, out any) error {

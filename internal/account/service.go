@@ -1,0 +1,286 @@
+package account
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/dengankarya/connector/common"
+	"github.com/dengankarya/connector/internal/payment/repository"
+	"github.com/google/uuid"
+	"github.com/sirupsen/logrus"
+)
+
+// Service handles all account-level operations: activity feed, shipping balance, holds, topups.
+type Service struct {
+	repo     *Repository
+	txRunner *repository.TxRunner
+	logger   *logrus.Logger
+}
+
+// NewService creates a Service.
+func NewService(repo *Repository, txRunner *repository.TxRunner, logger *logrus.Logger) *Service {
+	return &Service{repo: repo, txRunner: txRunner, logger: logger}
+}
+
+// ─── Activity feed ────────────────────────────────────────────────────────────
+
+const (
+	defaultPageSize = 20
+	maxPageSize     = 100
+)
+
+// ListTransactions returns a cursor-paginated unified activity feed for the tenant.
+func (s *Service) ListTransactions(ctx context.Context, tenantID int64, filter TransactionFilter) (*common.PaginationResponse[*ActivityItem], error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = defaultPageSize
+	} else if limit > maxPageSize {
+		limit = maxPageSize
+	}
+
+	p := ActivityListParams{
+		Limit: limit + 1, // fetch one extra to detect has_more
+		Types: filter.Types,
+		From:  filter.From,
+		To:    filter.To,
+	}
+
+	if filter.Cursor != "" {
+		cp, err := decodeActivityCursor(filter.Cursor)
+		if err != nil {
+			return nil, ErrInvalidCursor
+		}
+		p.Cursor = cp
+	}
+
+	items, err := s.repo.ListActivity(ctx, tenantID, p)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &common.PaginationResponse[*ActivityItem]{Items: items}
+	if len(items) > limit {
+		result.Items = items[:limit]
+		result.HasMore = true
+		last := result.Items[limit-1]
+		result.NextCursor = encodeActivityCursor(last.CreatedAt, last.ID.String())
+	}
+	return result, nil
+}
+
+// GetTransaction returns the full detail for a single activity item.
+// For payment items, ledger entries are included.
+func (s *Service) GetTransaction(ctx context.Context, tenantID int64, id uuid.UUID, activityType ActivityType) (*ActivityDetail, error) {
+	return s.repo.GetDetailByID(ctx, tenantID, id, activityType)
+}
+
+// ─── cursor encoding ──────────────────────────────────────────────────────────
+
+type activityCursorPayload struct {
+	T time.Time `json:"t"`
+	I string    `json:"i"` // UUID as string
+}
+
+func encodeActivityCursor(createdAt time.Time, id string) string {
+	b, _ := json.Marshal(activityCursorPayload{T: createdAt.UTC(), I: id})
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func decodeActivityCursor(s string) (*ActivityCursorPoint, error) {
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode: %w", err)
+	}
+	var p activityCursorPayload
+	if err := json.Unmarshal(b, &p); err != nil {
+		return nil, fmt.Errorf("json unmarshal: %w", err)
+	}
+	return &ActivityCursorPoint{CreatedAt: p.T, ID: p.I}, nil
+}
+
+// ─── Shipping balance ─────────────────────────────────────────────────────────
+
+// GetBalance returns the current available and on-hold totals for a tenant's shipping wallet.
+func (s *Service) GetBalance(ctx context.Context, tenantID int64) (*ShippingBalance, error) {
+	return s.repo.GetBalance(ctx, tenantID)
+}
+
+// GetPaymentBalance returns the transaction-derived payment settlement balance for a tenant.
+// Settled/pending figures are aggregated from payment_transactions; paid_out from payment_payouts.
+func (s *Service) GetPaymentBalance(ctx context.Context, tenantID int64) (*MerchantPaymentBalance, error) {
+	return s.repo.GetPaymentBalance(ctx, tenantID)
+}
+
+// TopupRequest is the input for a manual balance top-up.
+type TopupRequest struct {
+	TenantID int64
+	Amount   int64
+	Currency string
+	Note     string
+}
+
+// Topup credits the merchant's available balance and records the top-up audit row.
+func (s *Service) Topup(ctx context.Context, req TopupRequest) (*ShippingTopup, error) {
+	if req.Amount <= 0 {
+		return nil, fmt.Errorf("topup amount must be positive")
+	}
+	topup := &ShippingTopup{
+		TenantID: req.TenantID,
+		Amount:   req.Amount,
+		Currency: req.Currency,
+		Note:     req.Note,
+	}
+	err := s.txRunner.RunInTx(ctx, func(txCtx context.Context) error {
+		if err := s.repo.CreditAvailable(txCtx, req.TenantID, req.Amount, req.Currency); err != nil {
+			return fmt.Errorf("topup: credit balance: %w", err)
+		}
+		if err := s.repo.CreateTopup(txCtx, topup); err != nil {
+			return fmt.Errorf("topup: record audit: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.logger.WithFields(logrus.Fields{
+		"component": "account",
+		"tenant_id": req.TenantID,
+		"amount":    req.Amount,
+	}).Info("shipping balance topped up")
+	return topup, nil
+}
+
+// CreditFromPayment credits available balance from the shipping_fee of a paid payment.
+// Must be called inside an existing DB transaction.
+func (s *Service) CreditFromPayment(ctx context.Context, tenantID int64, amount int64, currency string) error {
+	if amount <= 0 {
+		return nil
+	}
+	return s.repo.CreditAvailable(ctx, tenantID, amount, currency)
+}
+
+// ListTopups returns all topups for a tenant.
+func (s *Service) ListTopups(ctx context.Context, tenantID int64) ([]*ShippingTopup, error) {
+	return s.repo.ListTopups(ctx, tenantID)
+}
+
+// ─── Holds ────────────────────────────────────────────────────────────────────
+
+// CreateHoldRequest is the input for reserving shipping funds for a draft order.
+type CreateHoldRequest struct {
+	TenantID    int64
+	OrderNumber string
+	Amount      int64
+	Currency    string
+}
+
+// CreateHold deducts amount from available and places it on hold for the given order.
+func (s *Service) CreateHold(ctx context.Context, req CreateHoldRequest) (*ShippingHold, error) {
+	if req.Amount <= 0 {
+		return nil, fmt.Errorf("hold amount must be positive")
+	}
+	hold := &ShippingHold{
+		TenantID:    req.TenantID,
+		OrderNumber: req.OrderNumber,
+		Amount:      req.Amount,
+		Currency:    req.Currency,
+	}
+	err := s.txRunner.RunInTx(ctx, func(txCtx context.Context) error {
+		if err := s.repo.DeductAvailableAndHold(txCtx, req.TenantID, req.Amount); err != nil {
+			return err
+		}
+		return s.repo.CreateHold(txCtx, hold)
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.logger.WithFields(logrus.Fields{
+		"component":    "account",
+		"tenant_id":    req.TenantID,
+		"order_number": req.OrderNumber,
+		"amount":       req.Amount,
+	}).Info("shipping hold created")
+	return hold, nil
+}
+
+// ConfirmHold transitions a hold from holding → confirmed and removes the on_hold amount.
+func (s *Service) ConfirmHold(ctx context.Context, tenantID int64, holdID uuid.UUID) (*ShippingHold, error) {
+	var hold *ShippingHold
+	err := s.txRunner.RunInTx(ctx, func(txCtx context.Context) error {
+		var err error
+		hold, err = s.repo.GetHoldByID(txCtx, holdID)
+		if err != nil {
+			return err
+		}
+		if hold.TenantID != tenantID {
+			return ErrHoldNotFound
+		}
+		if hold.Status != HoldStatusHolding {
+			return ErrHoldAlreadyActioned
+		}
+		now := time.Now().UTC()
+		if err := s.repo.UpdateHoldStatus(txCtx, holdID, HoldStatusConfirmed, now); err != nil {
+			return err
+		}
+		if err := s.repo.DeductHold(txCtx, tenantID, hold.Amount); err != nil {
+			return err
+		}
+		hold.Status = HoldStatusConfirmed
+		hold.ConfirmedAt = &now
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.logger.WithFields(logrus.Fields{
+		"component": "account",
+		"tenant_id": tenantID,
+		"hold_id":   holdID,
+	}).Info("shipping hold confirmed")
+	return hold, nil
+}
+
+// ReleaseHold transitions a hold from holding → released and returns funds to available.
+func (s *Service) ReleaseHold(ctx context.Context, tenantID int64, holdID uuid.UUID) (*ShippingHold, error) {
+	var hold *ShippingHold
+	err := s.txRunner.RunInTx(ctx, func(txCtx context.Context) error {
+		var err error
+		hold, err = s.repo.GetHoldByID(txCtx, holdID)
+		if err != nil {
+			return err
+		}
+		if hold.TenantID != tenantID {
+			return ErrHoldNotFound
+		}
+		if hold.Status != HoldStatusHolding {
+			return ErrHoldAlreadyActioned
+		}
+		now := time.Now().UTC()
+		if err := s.repo.UpdateHoldStatus(txCtx, holdID, HoldStatusReleased, now); err != nil {
+			return err
+		}
+		if err := s.repo.ReturnHoldToAvailable(txCtx, tenantID, hold.Amount); err != nil {
+			return err
+		}
+		hold.Status = HoldStatusReleased
+		hold.ReleasedAt = &now
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.logger.WithFields(logrus.Fields{
+		"component": "account",
+		"tenant_id": tenantID,
+		"hold_id":   holdID,
+	}).Info("shipping hold released")
+	return hold, nil
+}
+
+// ListHolds returns all holds for a tenant.
+func (s *Service) ListHolds(ctx context.Context, tenantID int64) ([]*ShippingHold, error) {
+	return s.repo.ListHolds(ctx, tenantID)
+}

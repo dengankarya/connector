@@ -37,6 +37,12 @@ var validTransitions = map[PaymentStatus][]PaymentStatus{
 	StatusVoided:          {},
 }
 
+// IsValid reports whether s is a recognised payment status.
+func (s PaymentStatus) IsValid() bool {
+	_, ok := validTransitions[s]
+	return ok
+}
+
 // CanTransitionTo returns true when transitioning from s to next is a valid move.
 func (s PaymentStatus) CanTransitionTo(next PaymentStatus) bool {
 	for _, allowed := range validTransitions[s] {
@@ -58,22 +64,29 @@ type PaymentTransaction struct {
 	ProviderInvoiceID string         `json:"provider_invoice_id,omitempty"` // Xendit payment_session_id (ps-xxx)
 	ProviderPaymentID string         `json:"provider_payment_id,omitempty"` // Xendit payment_id (py-xxx); populated on payment.capture
 	CheckoutURL       string         `json:"checkout_url,omitempty"`        // Xendit invoice payment page URL returned to the caller
-	XenditAccountID   string         `json:"xendit_account_id,omitempty"`   // Merchant's Xendit sub-account ID; used as for-user-id and transfer destination
 	PaymentMethod     string         `json:"payment_method,omitempty"`      // e.g. "BANK_TRANSFER", "QRIS", "CREDIT_CARD"
 	PaymentChannel    string         `json:"payment_channel,omitempty"`     // e.g. "BRI", "MANDIRI", "OVO"
-	Amount            int64          `json:"amount,omitempty"`              // gross amount (merchant_amount + platform_fee)
+	Amount            int64          `json:"amount,omitempty"`              // gross amount (merchant_amount + platform_fee + shipping_fee)
 	Currency          string         `json:"currency,omitempty"`
 	PlatformFee       int64          `json:"platform_fee,omitempty"`
-	MerchantAmount    int64          `json:"merchant_amount,omitempty"` // Amount - PlatformFee
+	ShippingFee       int64          `json:"shipping_fee,omitempty"`    // shipping credit topped up to merchant's balance
+	MerchantAmount    int64          `json:"merchant_amount,omitempty"` // Amount - PlatformFee - ShippingFee
 	Status            PaymentStatus  `json:"status,omitempty"`
 	Description       string         `json:"description,omitempty"`
 	Metadata          map[string]any `json:"metadata,omitempty"`
-	ExpiresAt         *time.Time     `json:"expires_at,omitempty"`
-	PaidAt            *time.Time     `json:"paid_at,omitempty"`
-	SettledAt         *time.Time     `json:"settled_at,omitempty"`
-	CreatedAt         time.Time      `json:"created_at,omitempty"`
-	UpdatedAt         time.Time      `json:"updated_at,omitempty"`
-	Version           int            `json:"version,omitempty"` // optimistic lock version; increment on every write
+	// Fee breakdown — populated by the settlement sync job after Xendit confirms settlement.
+	XenditFee            int64 `json:"xendit_fee,omitempty"`
+	VAT                  int64 `json:"vat,omitempty"`
+	XenditWithholdingTax int64 `json:"xendit_withholding_tax,omitempty"`
+	ThirdPartyWHT        int64 `json:"third_party_wht,omitempty"`
+
+	ExpiresAt               *time.Time `json:"expires_at,omitempty"`
+	PaidAt                  *time.Time `json:"paid_at,omitempty"`
+	SettledAt               *time.Time `json:"settled_at,omitempty"`
+	EstimatedSettlementTime *time.Time `json:"estimated_settlement_time,omitempty"`
+	CreatedAt               time.Time  `json:"created_at,omitempty"`
+	UpdatedAt               time.Time  `json:"updated_at,omitempty"`
+	Version                 int        `json:"version,omitempty"` // optimistic lock version; increment on every write
 }
 
 // TransitionTo attempts a state transition.
@@ -98,11 +111,12 @@ func (t *PaymentTransaction) IsFinalState() bool {
 
 // Validate checks internal consistency of the transaction amounts.
 func (t *PaymentTransaction) Validate() error {
-	if t.MerchantAmount+t.PlatformFee != t.Amount {
+	if t.MerchantAmount+t.PlatformFee+t.ShippingFee != t.Amount {
 		return ErrAmountMismatch{
 			Amount:         t.Amount,
 			MerchantAmount: t.MerchantAmount,
 			PlatformFee:    t.PlatformFee,
+			ShippingFee:    t.ShippingFee,
 		}
 	}
 	return nil

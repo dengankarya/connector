@@ -11,7 +11,6 @@ import (
 // CreateInvoiceRequest is the provider-agnostic payment session creation input.
 // Maps to Xendit POST /sessions with session_type=PAY, mode=PAYMENT_LINK.
 type CreateInvoiceRequest struct {
-	ForUserID              string   // provider sub-account ID (e.g. Xendit for-user-id header)
 	ExternalID             string   // caller's idempotency key / order reference (→ reference_id)
 	Amount                 int64    // gross amount in smallest currency unit
 	Currency               string   // e.g. "IDR"
@@ -29,17 +28,17 @@ type CreateInvoiceRequest struct {
 
 // Invoice is a provider-agnostic invoice response.
 type Invoice struct {
-	ProviderInvoiceID string
-	CheckoutURL       string
-	Status            string
-	Amount            int64
-	Currency          string
-	ExpiresAt         *time.Time
+	ProviderInvoiceID      string
+	CheckoutURL            string
+	Status                 string
+	Amount                 int64
+	Currency               string
+	ExpiresAt              *time.Time
+	AllowedPaymentChannels []string // set on GET /sessions — used as payment_method fallback
 }
 
 // CreateRefundRequest is the provider-agnostic refund request.
 type CreateRefundRequest struct {
-	ForUserID         string // provider sub-account ID (e.g. Xendit for-user-id header)
 	ProviderInvoiceID string
 	Amount            int64
 	Reason            string
@@ -55,7 +54,6 @@ type Refund struct {
 
 // CreatePayoutRequest is the provider-agnostic payout/disbursement request.
 type CreatePayoutRequest struct {
-	ForUserID     string // provider sub-account ID (e.g. Xendit for-user-id header)
 	ExternalID    string
 	Amount        int64
 	Currency      string
@@ -70,21 +68,6 @@ type Payout struct {
 	ProviderPayoutID string
 	Status           string
 	Amount           int64
-}
-
-// TransferRequest is the provider-agnostic fund transfer request.
-// Used to route merchant_amount to a sub-account after payment.
-type TransferRequest struct {
-	Reference         string // unique idempotency key for this transfer
-	Amount            int64
-	Currency          string
-	DestinationUserID string // merchant's sub-account ID at the provider
-}
-
-// TransferResponse is the provider-agnostic transfer response.
-type TransferResponse struct {
-	ProviderTransferID string
-	Status             string
 }
 
 // WebhookEvent is a provider-agnostic parsed event from a webhook callback.
@@ -103,14 +86,41 @@ type WebhookEvent struct {
 	RawPayload        []byte
 }
 
-// BalanceRequest is a provider-agnostic balance request
-type BalanceRequest struct {
-	ForUserID string
+// ── Settlement sync ───────────────────────────────────────────────────────────
+
+// ListTransactionsRequest is the input for fetching transactions from a provider.
+type ListTransactionsRequest struct {
+	CreatedGTE time.Time // only return transactions created at or after this time
+	AfterID    string    // cursor for next page (last ID from previous response)
+	Limit      int       // max results per page; provider may cap this
 }
 
-// Balance is a provider-agnostic balance
-type Balance struct {
-	Balance int
+// ProviderTransaction is a provider-agnostic representation of a settled/pending transaction
+// returned by the provider's transaction list API.
+type ProviderTransaction struct {
+	ID                      string
+	SettlementStatus        string // "PENDING" | "SETTLED"
+	XenditFee               int64
+	VAT                     int64
+	XenditWithholdingTax    int64
+	ThirdPartyWHT           int64
+	EstimatedSettlementTime *time.Time
+	PaymentSessionID        string // links to our provider_invoice_id
+	Created                 time.Time
+}
+
+// ListTransactionsResult is the paginated response from the provider transaction list.
+type ListTransactionsResult struct {
+	Transactions []ProviderTransaction
+	HasMore      bool
+	LastID       string // pass as AfterID in the next request
+}
+
+// TransactionSyncer is implemented by providers that expose a transaction list API
+// for settlement reconciliation. Not all providers support this — the settlement
+// sync job depends on this interface, not PaymentProvider.
+type TransactionSyncer interface {
+	ListTransactions(ctx context.Context, req ListTransactionsRequest) (*ListTransactionsResult, error)
 }
 
 // PaymentProvider abstracts all interactions with an external payment gateway.
@@ -120,10 +130,10 @@ type PaymentProvider interface {
 	CreateInvoice(ctx context.Context, req CreateInvoiceRequest) (*Invoice, error)
 
 	// GetInvoice fetches the current provider-side state of an invoice.
-	GetInvoice(ctx context.Context, invoiceID, forUserID string) (*Invoice, error)
+	GetInvoice(ctx context.Context, invoiceID string) (*Invoice, error)
 
 	// CancelInvoice voids an invoice that has not yet been paid.
-	CancelInvoice(ctx context.Context, invoiceID, forUserID string) error
+	CancelInvoice(ctx context.Context, invoiceID string) error
 
 	// CreateRefund initiates a refund for a paid invoice.
 	CreateRefund(ctx context.Context, req CreateRefundRequest) (*Refund, error)
@@ -135,15 +145,8 @@ type PaymentProvider interface {
 	// ParseWebhookEvent converts a raw payload into a typed, provider-agnostic event.
 	ParseWebhookEvent(ctx context.Context, payload []byte) (*WebhookEvent, error)
 
-	// CreatePayout initiates a bank transfer disbursement.
+	// CreatePayout initiates a bank transfer disbursement to a merchant's bank account.
 	CreatePayout(ctx context.Context, req CreatePayoutRequest) (*Payout, error)
-
-	// Transfer moves funds from the platform account to a merchant sub-account.
-	// Called automatically after a payment is marked paid to route merchant_amount.
-	Transfer(ctx context.Context, req TransferRequest) (*TransferResponse, error)
-
-	// GetBalance retrieve merchant sub-account balance.
-	GetBalance(ctx context.Context, req BalanceRequest) (*Balance, error)
 
 	// ProviderName returns the canonical provider identifier (e.g. "xendit").
 	ProviderName() string
