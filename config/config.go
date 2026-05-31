@@ -34,6 +34,8 @@ type Configuration struct {
 
 	SwaggerUsername string `env:"SWAGGER_USERNAME"`
 	SwaggerPassword string `env:"SWAGGER_PASSWORD"`
+
+	SentryDSN string `env:"SENTRY_DSN"`
 }
 
 func (c Configuration) IsThisRequestAuthenticated(apiKey string) bool {

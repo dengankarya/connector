@@ -69,6 +69,8 @@ func main() {
 
 	cfg := config.ParseENV()
 
+	initSentry(cfg.SentryDSN, cfg.ENV)
+
 	// ── Tokokarya client — payment webhook forwarding ────────────────────────
 	var tokokaryaClient *tokokarya.Client
 	if cfg.TokokaryaURL != "" && cfg.TokokaryaAPIKey != "" {
@@ -192,6 +194,7 @@ func main() {
 	app := fiber.New()
 	app.Get("/swagger/*", basicAuth(cfg.SwaggerUsername, cfg.SwaggerPassword), serveSwaggerUI)
 	app.Use(cors.New(cors.ConfigDefault))
+	app.Use(sentryRecovery())
 	app.Use(requestLogger())
 	apiRootGroup := app.Group("/api/v1")
 
