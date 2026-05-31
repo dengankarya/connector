@@ -26,6 +26,7 @@ func RegisterHandlers(mux fiber.Router, service *ShippingService) {
 	mux.Get("/couriers", ctrl.handleGetCourierList)
 	mux.Post("/rates", ctrl.handleGetCourierRates)
 	mux.Get("/:id", ctrl.handleGetShipment)
+	mux.Post("/:id/confirm", ctrl.handleConfirmShipment)
 }
 
 type controller struct {
@@ -205,6 +206,54 @@ func (ctrl *controller) handleGetShipment(c fiber.Ctx) error {
 			Status: http.StatusText(http.StatusInternalServerError),
 			Error:  err.Error(),
 		})
+	}
+
+	return c.Status(http.StatusOK).JSON(common.Response{
+		Status: http.StatusText(http.StatusOK),
+		Data:   shipment,
+	})
+}
+
+// handleConfirmShipment godoc
+//
+//	@Summary		Confirm draft shipment
+//	@Description	Promotes a draft shipment to a live order at Biteship. The shipment must belong to the authenticated tenant and have a valid provider draft order ID. Returns 402 if the merchant's shipping balance is insufficient.
+//	@Tags			Shipping
+//	@Produce		json
+//	@Param			X-Tenant-ID	header		int64											true	"Tenant ID"
+//	@Param			id			path		string											true	"Shipment UUID"
+//	@Success		200			{object}	common.Response{data=shippingDomain.Shipment}	"Confirmed shipment"
+//	@Failure		400			{object}	common.Response{error=common.ErrorDetail}		"Invalid request (e.g. missing tenant ID, invalid UUID)"
+//	@Failure		402			{object}	common.Response{error=common.ErrorDetail}		"Insufficient shipping balance"
+//	@Failure		404			{object}	common.Response{error=common.ErrorDetail}		"Shipment not found"
+//	@Failure		500			{object}	common.Response{error=common.ErrorDetail}		"Internal server error"
+//	@Security		ApiKeyAuth
+//	@Router			/shipments/{id}/confirm [post]
+func (ctrl *controller) handleConfirmShipment(c fiber.Ctx) error {
+	tenantID, _ := strconv.ParseInt(c.Get("X-Tenant-ID"), 10, 64)
+	if tenantID == 0 {
+		return c.Status(http.StatusBadRequest).JSON(
+			common.Err(http.StatusText(http.StatusBadRequest), "BR_MISSING_TENANT_ID", "X-Tenant-ID header is required"),
+		)
+	}
+
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(
+			common.Err(http.StatusText(http.StatusBadRequest), "BR_INVALID_SHIPMENT_ID", "invalid shipment id"),
+		)
+	}
+
+	shipment, err := ctrl.svc.ConfirmShipment(c.Context(), tenantID, id)
+	if err != nil {
+		var de *common.DomainError
+		if errors.As(err, &de) {
+			status := de.HTTPStatus()
+			return c.Status(status).JSON(common.Err(http.StatusText(status), de.Code, de.Message))
+		}
+		return c.Status(http.StatusInternalServerError).JSON(
+			common.Err(http.StatusText(http.StatusInternalServerError), "IN_INTERNAL_ERROR", err.Error()),
+		)
 	}
 
 	return c.Status(http.StatusOK).JSON(common.Response{

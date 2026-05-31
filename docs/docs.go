@@ -32,14 +32,14 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Returns the merchant's current shipping wallet snapshot: available funds and funds on hold for pending shipments.",
+                "description": "Returns the merchant's combined balance: shipping wallet (available/on-hold) and payment settlement balance (settled/pending/paid-out). Both are computed from local DB — no external API call.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Account"
                 ],
-                "summary": "Get shipping balance",
+                "summary": "Get unified balance",
                 "parameters": [
                     {
                         "type": "integer",
@@ -52,7 +52,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Balance snapshot",
+                        "description": "Unified balance",
                         "schema": {
                             "allOf": [
                                 {
@@ -62,7 +62,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/internal_account.ShippingBalance"
+                                            "$ref": "#/definitions/internal_account.UnifiedBalance"
                                         }
                                     }
                                 }
@@ -148,9 +148,12 @@ const docTemplate = `{
                 "security": [
                     {
                         "ApiKeyAuth": []
+                    },
+                    {
+                        "AdminApiKeyAuth": []
                     }
                 ],
-                "description": "Credits the merchant's available shipping balance. Called by the platform operator after the merchant has manually transferred funds.",
+                "description": "Credits the merchant's available shipping balance. Restricted to admin API keys (ADMIN_API_KEYS). Called by the platform operator after the merchant has manually transferred funds.",
                 "consumes": [
                     "application/json"
                 ],
@@ -160,7 +163,7 @@ const docTemplate = `{
                 "tags": [
                     "Account"
                 ],
-                "summary": "Top up shipping balance",
+                "summary": "Top up shipping balance (admin only)",
                 "parameters": [
                     {
                         "type": "integer",
@@ -201,6 +204,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — admin API key required",
                         "schema": {
                             "$ref": "#/definitions/common.Response"
                         }
@@ -616,7 +625,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Returns the full detail for a single activity item. For payment type items, ledger entries are included. The ` + "`" + `type` + "`" + ` query param is required to identify the source table.",
+                "description": "Returns the full detail for a single activity item. For payment type items, metadata and ledger entries are also included. The ` + "`" + `type` + "`" + ` query param is required to identify the source table.",
                 "produces": [
                     "application/json"
                 ],
@@ -1785,6 +1794,132 @@ const docTemplate = `{
                 }
             }
         },
+        "/shipments/{id}/confirm": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Promotes a draft shipment to a live order at Biteship. The shipment must belong to the authenticated tenant and have a valid provider draft order ID. Returns 402 if the merchant's shipping balance is insufficient.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Shipping"
+                ],
+                "summary": "Confirm draft shipment",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "Tenant ID",
+                        "name": "X-Tenant-ID",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Shipment UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Confirmed shipment",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_dengankarya_connector_internal_shipping_domain.Shipment"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request (e.g. missing tenant ID, invalid UUID)",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/common.ErrorDetail"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "402": {
+                        "description": "Insufficient shipping balance",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/common.ErrorDetail"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "Shipment not found",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/common.ErrorDetail"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/common.ErrorDetail"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/webhook/biteship": {
             "post": {
                 "description": "Receives Biteship shipment status update callbacks. Authenticated via a configurable header key/value pair set in the Biteship dashboard.",
@@ -1851,6 +1986,17 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "common.ErrorDetail": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
         "common.Response": {
             "type": "object",
             "properties": {
@@ -1978,7 +2124,9 @@ const docTemplate = `{
                 },
                 "metadata": {
                     "type": "object",
-                    "additionalProperties": {}
+                    "additionalProperties": {
+                        "type": "string"
+                    }
                 },
                 "order_number": {
                     "description": "Tokokarya order number (string, not UUID)",
@@ -2647,6 +2795,10 @@ const docTemplate = `{
                         "$ref": "#/definitions/internal_account.LedgerEntry"
                     }
                 },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
                 "note": {
                     "type": "string"
                 },
@@ -2901,6 +3053,27 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_account.UnifiedBalance": {
+            "type": "object",
+            "properties": {
+                "payment": {
+                    "description": "Payment settlement — computed from payment_transactions and payment_payouts.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_account.MerchantPaymentBalance"
+                        }
+                    ]
+                },
+                "shipping": {
+                    "description": "Shipping wallet — available funds and funds on hold for pending shipments.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_account.ShippingBalance"
+                        }
+                    ]
+                }
+            }
+        },
         "internal_payment.ConfirmManualPaymentBody": {
             "type": "object",
             "properties": {
@@ -2926,7 +3099,9 @@ const docTemplate = `{
                 },
                 "metadata": {
                     "type": "object",
-                    "additionalProperties": {}
+                    "additionalProperties": {
+                        "type": "string"
+                    }
                 },
                 "order_number": {
                     "type": "string"
@@ -3014,7 +3189,14 @@ const docTemplate = `{
         }
     },
     "securityDefinitions": {
+        "AdminApiKeyAuth": {
+            "description": "Admin API key (ADMIN_API_KEYS) — required for operator-only endpoints such as balance topup",
+            "type": "apiKey",
+            "name": "X-API-KEY",
+            "in": "header"
+        },
         "ApiKeyAuth": {
+            "description": "Regular API key (ALLOWED_API_KEYS)",
             "type": "apiKey",
             "name": "X-API-KEY",
             "in": "header"

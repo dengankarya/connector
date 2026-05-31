@@ -1,13 +1,13 @@
 package domain
 
 import (
-	"errors"
 	"time"
 
+	"github.com/dengankarya/connector/common"
 	"github.com/google/uuid"
 )
 
-var ErrNotFound = errors.New("shipment: not found")
+var ErrNotFound = common.NewDomainError("NF_SHIPMENT_NOT_FOUND", "shipment not found")
 
 type ShipmentStatus string
 

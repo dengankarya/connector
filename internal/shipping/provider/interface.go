@@ -325,6 +325,11 @@ type ShippingProvider interface {
 	// select a courier service and see the pricing.
 	GetRates(ctx context.Context, req GetRatesRequest) (*GetRatesResult, error)
 
+	// ConfirmShipment promotes a draft order to a live order at the provider.
+	// providerDraftOrderID is the draft order identifier returned when the shipment was created.
+	// Returns the updated shipment with the live order ID and current status.
+	ConfirmShipment(ctx context.Context, providerDraftOrderID string) (*domain.Shipment, error)
+
 	// ProviderName returns the canonical provider identifier.
 	//
 	// Example values:

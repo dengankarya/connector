@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
+	"github.com/dengankarya/connector/common"
 	"github.com/dengankarya/connector/internal/shipping/domain"
 	"github.com/dengankarya/connector/internal/shipping/provider"
 	"github.com/dengankarya/connector/internal/shipping/repository"
@@ -16,20 +16,28 @@ import (
 )
 
 // ErrInvalidCursor is returned when the cursor query parameter cannot be decoded.
-var ErrInvalidCursor = errors.New("invalid cursor")
+var ErrInvalidCursor = common.NewDomainError("BR_INVALID_CURSOR", "invalid pagination cursor")
 
 type LogisticAggregator interface {
 	GetCourierList(ctx context.Context, couriers []string) ([]biteship.Courier, error)
 }
 
-type ShippingService struct {
-	repo         LogisticAggregator
-	provider     provider.ShippingProvider
-	shipmentRepo *repository.ShipmentRepository // may be nil when DB is not configured
+// BalanceValidator validates that a merchant has sufficient shipping balance before confirming a shipment.
+type BalanceValidator interface {
+	// ValidateShippingConfirm returns an error (including account.ErrInsufficientBalance) when
+	// the merchant cannot cover the shipment cost. Returns nil when funds are available.
+	ValidateShippingConfirm(ctx context.Context, tenantID int64, orderNumber string, requiredAmount int64) error
 }
 
-func NewShippingService(repo LogisticAggregator, prov provider.ShippingProvider, shipmentRepo *repository.ShipmentRepository) *ShippingService {
-	return &ShippingService{repo: repo, provider: prov, shipmentRepo: shipmentRepo}
+type ShippingService struct {
+	repo             LogisticAggregator
+	provider         provider.ShippingProvider
+	shipmentRepo     *repository.ShipmentRepository // may be nil when DB is not configured
+	balanceValidator BalanceValidator               // may be nil when account module is disabled
+}
+
+func NewShippingService(repo LogisticAggregator, prov provider.ShippingProvider, shipmentRepo *repository.ShipmentRepository, balanceValidator BalanceValidator) *ShippingService {
+	return &ShippingService{repo: repo, provider: prov, shipmentRepo: shipmentRepo, balanceValidator: balanceValidator}
 }
 
 func (s *ShippingService) GetCourierList(ctx context.Context, couriers []string) ([]biteship.Courier, error) {
@@ -53,6 +61,51 @@ func (s *ShippingService) GetShipment(ctx context.Context, tenantID int64, id uu
 	}
 	if shipment.TenantID != tenantID {
 		return nil, domain.ErrNotFound
+	}
+	return shipment, nil
+}
+
+// ConfirmShipment promotes a draft shipment to a live order at the provider and updates the DB record.
+// It looks up the shipment by its internal ID, enforces tenant ownership, then calls the provider.
+func (s *ShippingService) ConfirmShipment(ctx context.Context, tenantID int64, id uuid.UUID) (*domain.Shipment, error) {
+	if s.shipmentRepo == nil {
+		return nil, domain.ErrNotFound
+	}
+
+	shipment, err := s.shipmentRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if shipment.TenantID != tenantID {
+		return nil, domain.ErrNotFound
+	}
+	if shipment.ProviderDraftOrderID == nil || *shipment.ProviderDraftOrderID == "" {
+		return nil, fmt.Errorf("shipment %s has no draft order ID", id)
+	}
+
+	if s.balanceValidator != nil {
+		if err := s.balanceValidator.ValidateShippingConfirm(ctx, tenantID, shipment.OrderNumber, shipment.ShippingCost); err != nil {
+			return nil, err
+		}
+	}
+
+	updated, err := s.provider.ConfirmShipment(ctx, *shipment.ProviderDraftOrderID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Merge provider response into the existing record.
+	shipment.ProviderOrderID = updated.ProviderOrderID
+	shipment.Status = updated.Status
+	shipment.ShippingCost = updated.ShippingCost
+	shipment.TrackingNumber = updated.TrackingNumber
+	shipment.TrackingURL = updated.TrackingURL
+	if updated.ConfirmedAt != nil {
+		shipment.ConfirmedAt = updated.ConfirmedAt
+	}
+
+	if err := s.shipmentRepo.Update(ctx, shipment); err != nil {
+		return nil, fmt.Errorf("confirm shipment: update record: %w", err)
 	}
 	return shipment, nil
 }

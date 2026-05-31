@@ -20,26 +20,28 @@ var (
 	_ ShippingTopup
 	_ ShippingHold
 	_ MerchantPaymentBalance
+	_ UnifiedBalance
 )
 
 // RegisterHandlers mounts all account endpoints on mux.
+// adminOnly is applied to operator-only mutations (topup); pass adminRequest(cfg) from main.
 //
 //	GET  /accounts/transactions          unified activity feed
 //	GET  /accounts/transactions/:id      detail with ledger entries
-//	GET  /accounts/balance               shipping wallet snapshot
-//	POST /accounts/balance/topup         credit available balance
+//	GET  /accounts/balance               unified balance (shipping + payment gateway)
+//	POST /accounts/balance/topup         credit available balance  [admin only]
 //	GET  /accounts/balance/payments      transaction-derived payment settlement balance
 //	GET  /accounts/holds                 list holds
 //	POST /accounts/holds                 create a hold for a draft order
 //	POST /accounts/holds/:id/confirm     confirm shipment, disburse hold
 //	POST /accounts/holds/:id/release     cancel order, return hold to available
-func RegisterHandlers(mux fiber.Router, svc *Service) {
+func RegisterHandlers(mux fiber.Router, svc *Service, adminOnly fiber.Handler) {
 	ctrl := &controller{svc: svc}
 
 	mux.Get("/transactions", ctrl.listTransactions)
 	mux.Get("/transactions/:id", ctrl.getTransaction)
 	mux.Get("/balance", ctrl.getBalance)
-	mux.Post("/balance/topup", ctrl.topup)
+	mux.Post("/balance/topup", adminOnly, ctrl.topup)
 	mux.Get("/balance/payments", ctrl.getPaymentBalance)
 	mux.Get("/holds", ctrl.listHolds)
 	mux.Post("/holds", ctrl.createHold)
@@ -123,7 +125,7 @@ func (ctrl *controller) listTransactions(c fiber.Ctx) error {
 // getTransaction godoc
 //
 //	@Summary		Get transaction detail
-//	@Description	Returns the full detail for a single activity item. For payment type items, ledger entries are included. The `type` query param is required to identify the source table.
+//	@Description	Returns the full detail for a single activity item. For payment type items, metadata and ledger entries are also included. The `type` query param is required to identify the source table.
 //	@Tags			Account
 //	@Produce		json
 //	@Param			X-Tenant-ID	header		int64											true	"Tenant ID"
@@ -191,12 +193,12 @@ func (ctrl *controller) getPaymentBalance(c fiber.Ctx) error {
 
 // getBalance godoc
 //
-//	@Summary		Get shipping balance
-//	@Description	Returns the merchant's current shipping wallet snapshot: available funds and funds on hold for pending shipments.
+//	@Summary		Get unified balance
+//	@Description	Returns the merchant's combined balance: shipping wallet (available/on-hold) and payment settlement balance (settled/pending/paid-out). Both are computed from local DB — no external API call.
 //	@Tags			Account
 //	@Produce		json
 //	@Param			X-Tenant-ID	header		int64											true	"Tenant ID"
-//	@Success		200			{object}	common.Response{data=account.ShippingBalance}	"Balance snapshot"
+//	@Success		200			{object}	common.Response{data=account.UnifiedBalance}	"Unified balance"
 //	@Failure		400			{object}	common.Response									"Missing X-Tenant-ID"
 //	@Failure		500			{object}	common.Response									"Internal server error"
 //	@Security		ApiKeyAuth
@@ -206,7 +208,7 @@ func (ctrl *controller) getBalance(c fiber.Ctx) error {
 	if tenantID == 0 {
 		return badRequest(c, "X-Tenant-ID header is required")
 	}
-	bal, err := ctrl.svc.GetBalance(c.Context(), tenantID)
+	bal, err := ctrl.svc.GetUnifiedBalance(c.Context(), tenantID)
 	if err != nil {
 		return internalError(c, err)
 	}
@@ -215,8 +217,8 @@ func (ctrl *controller) getBalance(c fiber.Ctx) error {
 
 // topup godoc
 //
-//	@Summary		Top up shipping balance
-//	@Description	Credits the merchant's available shipping balance. Called by the platform operator after the merchant has manually transferred funds.
+//	@Summary		Top up shipping balance (admin only)
+//	@Description	Credits the merchant's available shipping balance. Restricted to admin API keys (ADMIN_API_KEYS). Called by the platform operator after the merchant has manually transferred funds.
 //	@Tags			Account
 //	@Accept			json
 //	@Produce		json
@@ -224,8 +226,10 @@ func (ctrl *controller) getBalance(c fiber.Ctx) error {
 //	@Param			body		body		account.TopupBody							true	"Top-up request"
 //	@Success		201			{object}	common.Response{data=account.ShippingTopup}	"Top-up recorded"
 //	@Failure		400			{object}	common.Response								"Invalid request"
+//	@Failure		403			{object}	common.Response								"Forbidden — admin API key required"
 //	@Failure		500			{object}	common.Response								"Internal server error"
 //	@Security		ApiKeyAuth
+//	@Security		AdminApiKeyAuth
 //	@Router			/accounts/balance/topup [post]
 func (ctrl *controller) topup(c fiber.Ctx) error {
 	tenantID := mustParseTenantID(c)

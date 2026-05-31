@@ -56,24 +56,24 @@ func (s PaymentStatus) CanTransitionTo(next PaymentStatus) bool {
 // PaymentTransaction is the central entity tracking a single payment's lifecycle.
 // All monetary amounts are in the smallest currency unit (e.g. IDR integer, no decimals).
 type PaymentTransaction struct {
-	ID                uuid.UUID      `json:"id,omitempty"`
-	TenantID          int64          `json:"tenant_id,omitempty"`
-	OrderNumber       string         `json:"order_number,omitempty"` // Tokokarya order number (string, not UUID)
-	IdempotencyKey    string         `json:"idempotency_key,omitempty"`
-	Provider          string         `json:"provider,omitempty"`            // "xendit", "midtrans", etc.
-	ProviderInvoiceID string         `json:"provider_invoice_id,omitempty"` // Xendit payment_session_id (ps-xxx)
-	ProviderPaymentID string         `json:"provider_payment_id,omitempty"` // Xendit payment_id (py-xxx); populated on payment.capture
-	CheckoutURL       string         `json:"checkout_url,omitempty"`        // Xendit invoice payment page URL returned to the caller
-	PaymentMethod     string         `json:"payment_method,omitempty"`      // e.g. "BANK_TRANSFER", "QRIS", "CREDIT_CARD"
-	PaymentChannel    string         `json:"payment_channel,omitempty"`     // e.g. "BRI", "MANDIRI", "OVO"
-	Amount            int64          `json:"amount,omitempty"`              // gross amount (merchant_amount + platform_fee + shipping_fee)
-	Currency          string         `json:"currency,omitempty"`
-	PlatformFee       int64          `json:"platform_fee,omitempty"`
-	ShippingFee       int64          `json:"shipping_fee,omitempty"`    // shipping credit topped up to merchant's balance
-	MerchantAmount    int64          `json:"merchant_amount,omitempty"` // Amount - PlatformFee - ShippingFee
-	Status            PaymentStatus  `json:"status,omitempty"`
-	Description       string         `json:"description,omitempty"`
-	Metadata          map[string]any `json:"metadata,omitempty"`
+	ID                uuid.UUID         `json:"id,omitempty"`
+	TenantID          int64             `json:"tenant_id,omitempty"`
+	OrderNumber       string            `json:"order_number,omitempty"` // Tokokarya order number (string, not UUID)
+	IdempotencyKey    string            `json:"idempotency_key,omitempty"`
+	Provider          string            `json:"provider,omitempty"`            // "xendit", "midtrans", etc.
+	ProviderInvoiceID string            `json:"provider_invoice_id,omitempty"` // Xendit payment_session_id (ps-xxx)
+	ProviderPaymentID string            `json:"provider_payment_id,omitempty"` // Xendit payment_id (py-xxx); populated on payment.capture
+	CheckoutURL       string            `json:"checkout_url,omitempty"`        // Xendit invoice payment page URL returned to the caller
+	PaymentMethod     string            `json:"payment_method,omitempty"`      // e.g. "BANK_TRANSFER", "QRIS", "CREDIT_CARD"
+	PaymentChannel    string            `json:"payment_channel,omitempty"`     // e.g. "BRI", "MANDIRI", "OVO"
+	Amount            int64             `json:"amount,omitempty"`              // gross amount (merchant_amount + platform_fee + shipping_fee)
+	Currency          string            `json:"currency,omitempty"`
+	PlatformFee       int64             `json:"platform_fee,omitempty"`
+	ShippingFee       int64             `json:"shipping_fee,omitempty"`    // shipping credit topped up to merchant's balance
+	MerchantAmount    int64             `json:"merchant_amount,omitempty"` // Amount - PlatformFee - ShippingFee
+	Status            PaymentStatus     `json:"status,omitempty"`
+	Description       string            `json:"description,omitempty"`
+	Metadata          map[string]string `json:"metadata,omitempty"`
 	// Fee breakdown — populated by the settlement sync job after Xendit confirms settlement.
 	XenditFee            int64 `json:"xendit_fee,omitempty"`
 	VAT                  int64 `json:"vat,omitempty"`

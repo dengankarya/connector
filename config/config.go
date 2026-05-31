@@ -12,6 +12,7 @@ type Configuration struct {
 	ENV            string `env:"ENV"`
 	PORT           string `env:"PORT"`
 	AllowedAPIKeys string `env:"ALLOWED_API_KEYS"`
+	AdminAPIKeys   string `env:"ADMIN_API_KEYS"` // operator-only endpoints (topup, payouts, etc.)
 
 	DatabaseDSN string `env:"DATABASE_DSN"`
 
@@ -39,7 +40,22 @@ func (c Configuration) IsThisRequestAuthenticated(apiKey string) bool {
 	if apiKey == "" {
 		return false
 	}
-	for _, key := range strings.Split(c.AllowedAPIKeys, ",") {
+	// Admin keys are implicitly valid regular keys — no need to list them in both vars.
+	for _, key := range strings.Split(c.AllowedAPIKeys+","+c.AdminAPIKeys, ",") {
+		if k := strings.TrimSpace(key); k != "" && k == apiKey {
+			return true
+		}
+	}
+	return false
+}
+
+// IsAdminRequest returns true when the key is in ADMIN_API_KEYS.
+// Admin keys are also valid regular keys — no need to list them in both vars.
+func (c Configuration) IsAdminRequest(apiKey string) bool {
+	if apiKey == "" || c.AdminAPIKeys == "" {
+		return false
+	}
+	for _, key := range strings.Split(c.AdminAPIKeys, ",") {
 		if strings.TrimSpace(key) == apiKey {
 			return true
 		}

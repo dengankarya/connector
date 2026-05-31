@@ -54,6 +54,12 @@ const shutdownTimeout = 30 * time.Second
 //	@securityDefinitions.apikey	ApiKeyAuth
 //	@in							header
 //	@name						X-API-KEY
+//	@description				Regular API key (ALLOWED_API_KEYS)
+
+//	@securityDefinitions.apikey	AdminApiKeyAuth
+//	@in							header
+//	@name						X-API-KEY
+//	@description				Admin API key (ADMIN_API_KEYS) — required for operator-only endpoints such as balance topup
 
 // @externalDocs.description	OpenAPI
 // @externalDocs.url			https://swagger.io/resources/open-api/
@@ -196,7 +202,7 @@ func main() {
 	registerHealthHandler(app)
 
 	// ── Biteship webhook — public, no API key check ─────────────────────────
-	shipping.RegisterWebhookHandler(apiRootGroup, cfg.BiteshipWebhookSignatureKey, cfg.BiteshipWebhookSignatureValue, shipmentRepo, tokokaryaClient, log.StandardLogger())
+	shipping.RegisterWebhookHandler(apiRootGroup, cfg.BiteshipWebhookSignatureKey, cfg.BiteshipWebhookSignatureValue, shipmentRepo, tokokaryaClient, balanceSvc, log.StandardLogger())
 
 	// ── Xendit webhook — public, no API key check ───────────────────────────
 	if cfg.DatabaseDSN != "" {
@@ -209,11 +215,11 @@ func main() {
 
 	biteshipClient := biteship.NewClient(cfg.BiteshipAPIKey, cfg.BiteshipBaseURL)
 	cachedAggregator := shipping.NewCachedAggregator(biteshipClient)
-	shippingSvc := shipping.NewShippingService(cachedAggregator, biteshipClient, shipmentRepo)
+	shippingSvc := shipping.NewShippingService(cachedAggregator, biteshipClient, shipmentRepo, balanceSvc)
 	shipping.RegisterHandlers(apiRootGroup.Group("/shipments"), shippingSvc)
 
 	if balanceSvc != nil {
-		account.RegisterHandlers(apiRootGroup.Group("/accounts"), balanceSvc)
+		account.RegisterHandlers(apiRootGroup.Group("/accounts"), balanceSvc, adminRequest(cfg))
 	}
 
 	wilayahClient := wilayah.NewClient(cfg.WilayahBaseURL)

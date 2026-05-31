@@ -205,14 +205,18 @@ func (r *Repository) GetDetailByID(ctx context.Context, tenantID int64, id uuid.
 
 	item := ActivityItem{ID: id, Type: activityType}
 
+	var metadata map[string]any
+
 	switch activityType {
 	case ActivityPayment:
 		row := db.QueryRow(ctx, `
-			SELECT amount, currency, COALESCE(order_number, ''), status::text, created_at
+			SELECT amount, currency, COALESCE(order_number, ''), status::text,
+			       COALESCE(metadata, '{}'), created_at
 			FROM payment_transactions
 			WHERE id = $1 AND tenant_id = $2`,
 			id, tenantID)
-		if err := row.Scan(&item.Amount, &item.Currency, &item.OrderNumber, &item.Status, &item.CreatedAt); err != nil {
+		if err := row.Scan(&item.Amount, &item.Currency, &item.OrderNumber, &item.Status,
+			&metadata, &item.CreatedAt); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, ErrNotFound
 			}
@@ -249,7 +253,7 @@ func (r *Repository) GetDetailByID(ctx context.Context, tenantID int64, id uuid.
 		return nil, fmt.Errorf("unknown activity type: %s", activityType)
 	}
 
-	detail := &ActivityDetail{ActivityItem: item}
+	detail := &ActivityDetail{ActivityItem: item, Metadata: metadata}
 
 	// Fetch ledger entries for payment transactions.
 	if activityType == ActivityPayment {
@@ -415,6 +419,18 @@ func (r *Repository) GetHoldByID(ctx context.Context, id uuid.UUID) (*ShippingHo
 		SELECT id::text, tenant_id, order_number, amount, currency, status,
 		       created_at, confirmed_at, released_at
 		FROM shipping_holds WHERE id = $1`, id)
+	return scanHold(row)
+}
+
+// GetHoldByOrderNumber returns the active (holding) hold for the given tenant and order number.
+// Returns ErrHoldNotFound when no active hold exists for that order.
+func (r *Repository) GetHoldByOrderNumber(ctx context.Context, tenantID int64, orderNumber string) (*ShippingHold, error) {
+	row := dbFromContext(ctx, r.pool).QueryRow(ctx, `
+		SELECT id::text, tenant_id, order_number, amount, currency, status,
+		       created_at, confirmed_at, released_at
+		FROM shipping_holds
+		WHERE tenant_id = $1 AND order_number = $2 AND status = 'holding'
+		LIMIT 1`, tenantID, orderNumber)
 	return scanHold(row)
 }
 

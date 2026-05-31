@@ -12,20 +12,20 @@ import (
 
 // createSessionDTO maps to POST /sessions.
 type createSessionDTO struct {
-	ReferenceID            string         `json:"reference_id"`
-	Currency               string         `json:"currency"`
-	Amount                 int64          `json:"amount"`
-	Country                string         `json:"country"`
-	SessionType            string         `json:"session_type"`             // always "PAY"
-	Mode                   string         `json:"mode"`                     // always "PAYMENT_LINK"
-	CaptureMethod          string         `json:"capture_method,omitempty"` // "AUTOMATIC"
-	AllowedPaymentChannels []string       `json:"allowed_payment_channels,omitempty"`
-	Description            string         `json:"description,omitempty"`
-	Customer               *customerDTO   `json:"customer,omitempty"`
-	ExpiresAt              *time.Time     `json:"expires_at,omitempty"`
-	SuccessReturnURL       string         `json:"success_return_url,omitempty"`
-	CancelReturnURL        string         `json:"cancel_return_url,omitempty"`
-	Metadata               map[string]any `json:"metadata,omitempty"`
+	ReferenceID            string            `json:"reference_id"`
+	Currency               string            `json:"currency"`
+	Amount                 int64             `json:"amount"`
+	Country                string            `json:"country"`
+	SessionType            string            `json:"session_type"`             // always "PAY"
+	Mode                   string            `json:"mode"`                     // always "PAYMENT_LINK"
+	CaptureMethod          string            `json:"capture_method,omitempty"` // "AUTOMATIC"
+	AllowedPaymentChannels []string          `json:"allowed_payment_channels,omitempty"`
+	Description            string            `json:"description,omitempty"`
+	Customer               *customerDTO      `json:"customer,omitempty"`
+	ExpiresAt              *time.Time        `json:"expires_at,omitempty"`
+	SuccessReturnURL       string            `json:"success_return_url,omitempty"`
+	CancelReturnURL        string            `json:"cancel_return_url,omitempty"`
+	Metadata               map[string]string `json:"metadata,omitempty"`
 }
 
 type customerDTO struct {
@@ -117,7 +117,7 @@ func toCreateSessionDTO(req provider.CreateInvoiceRequest) createSessionDTO {
 
 	// Preserve caller-provided metadata but always include Xendit-visible fields
 	// so the Xendit dashboard can be filtered by these values.
-	meta := make(map[string]any, len(req.Metadata))
+	meta := make(map[string]string, len(req.Metadata))
 	for k, v := range req.Metadata {
 		meta[k] = v
 	}
