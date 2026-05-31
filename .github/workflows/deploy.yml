@@ -1,9 +1,16 @@
 name: Deploy to Coolify
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
 
 env:
   REGISTRY: registry-f11bbti76xxdibpow7emrfcp.dengankarya.com
@@ -11,8 +18,9 @@ env:
 
 jobs:
   deploy:
-    name: Build, push & deploy
+    name: Deploy (${{ github.event.inputs.environment }})
     runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
 
     steps:
       - name: Checkout
@@ -34,9 +42,9 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.environment }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.environment }}-${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.environment }}
           cache-to: type=inline
 
       - name: Trigger Coolify deployment
