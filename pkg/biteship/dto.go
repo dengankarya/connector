@@ -107,8 +107,9 @@ type CreateOrderResponse struct {
 	Code    int64  `json:"code"`
 	Object  string `json:"object"`
 
-	ID      string  `json:"id"`
-	OrderID *string `json:"order_id"`
+	ID           string  `json:"id"`
+	OrderID      *string `json:"order_id"`
+	DraftOrderID *string `json:"draft_order_id"`
 
 	Origin      OrderAddressResponse `json:"origin"`
 	Destination OrderAddressResponse `json:"destination"`

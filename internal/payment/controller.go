@@ -194,20 +194,20 @@ func (ctrl *paymentController) createPayment(c fiber.Ctx) error {
 	}
 
 	var body struct {
-		OrderNumber            string         `json:"order_number"`
-		IdempotencyKey         string         `json:"idempotency_key"`
-		Amount                 int64          `json:"amount"`
-		Currency               string         `json:"currency"`
-		PlatformFee            int64          `json:"platform_fee"`
-		ShippingFee            int64          `json:"shipping_fee"`
-		AllowedPaymentChannels []string       `json:"allowed_payment_channels"`
-		SuccessReturnURL       string         `json:"success_return_url"`
-		CancelReturnURL        string         `json:"cancel_return_url"`
-		Description            string         `json:"description"`
-		CustomerEmail          string         `json:"customer_email"`
-		CustomerName           string         `json:"customer_name"`
-		CustomerReferenceID    string         `json:"customer_reference_id"`
-		Metadata               map[string]any `json:"metadata"`
+		OrderNumber            string            `json:"order_number"`
+		IdempotencyKey         string            `json:"idempotency_key"`
+		Amount                 int64             `json:"amount"`
+		Currency               string            `json:"currency"`
+		PlatformFee            int64             `json:"platform_fee"`
+		ShippingFee            int64             `json:"shipping_fee"`
+		AllowedPaymentChannels []string          `json:"allowed_payment_channels"`
+		SuccessReturnURL       string            `json:"success_return_url"`
+		CancelReturnURL        string            `json:"cancel_return_url"`
+		Description            string            `json:"description"`
+		CustomerEmail          string            `json:"customer_email"`
+		CustomerName           string            `json:"customer_name"`
+		CustomerReferenceID    string            `json:"customer_reference_id"`
+		Metadata               map[string]string `json:"metadata"`
 	}
 	if err := c.Bind().JSON(&body); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(common.Response{

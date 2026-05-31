@@ -23,7 +23,7 @@ type CreateInvoiceRequest struct {
 	CustomerName           string
 	CustomerReferenceID    string
 	ExpiresAt              *time.Time
-	Metadata               map[string]any
+	Metadata               map[string]string
 }
 
 // Invoice is a provider-agnostic invoice response.

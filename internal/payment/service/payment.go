@@ -38,7 +38,7 @@ type CreatePaymentRequest struct {
 	CustomerName           string
 	CustomerReferenceID    string
 	ExpiresAt              *time.Time
-	Metadata               map[string]any
+	Metadata               map[string]string
 }
 
 // ShippingBalanceCreditor credits a merchant's shipping balance from the shipping_fee
@@ -101,11 +101,11 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req CreatePaymentReq
 
 	// Merge caller metadata with platform-level fields visible on the Xendit dashboard.
 	// tenant_id lets you filter master-account transactions by merchant on Xendit.
-	meta := make(map[string]any, len(req.Metadata)+2)
+	meta := make(map[string]string, len(req.Metadata)+2)
 	for k, v := range req.Metadata {
 		meta[k] = v
 	}
-	meta["tenant_id"] = req.TenantID
+	meta["tenant_id"] = fmt.Sprintf("%d", req.TenantID)
 	if req.OrderNumber != "" {
 		meta["order_number"] = req.OrderNumber
 	}
@@ -272,7 +272,7 @@ type CreateManualPaymentRequest struct {
 	PaymentMethod  string // e.g. "CASH", "BANK_TRANSFER"
 	PaymentChannel string // e.g. bank name, "-"
 	Description    string
-	Metadata       map[string]any
+	Metadata       map[string]string
 }
 
 // CreateManualPayment records a payment transaction without calling any external provider.

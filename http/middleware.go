@@ -70,6 +70,21 @@ func authenticatedRequest(cfg *config.Configuration) fiber.Handler {
 	}
 }
 
+// adminRequest rejects requests whose X-API-KEY is not in ADMIN_API_KEYS.
+// Must be used after authenticatedRequest (which validates the key is in ALLOWED_API_KEYS).
+func adminRequest(cfg *config.Configuration) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		xAPIKeyValue := string(c.Request().Header.Peek("X-API-KEY"))
+		if !cfg.IsAdminRequest(xAPIKeyValue) {
+			return c.Status(http.StatusForbidden).JSON(common.Response{
+				Status: http.StatusText(http.StatusForbidden),
+				Error:  "FORBIDDEN",
+			})
+		}
+		return c.Next()
+	}
+}
+
 func requestLogger() fiber.Handler {
 	return logger.New(logger.Config{
 		LoggerFunc: func(c fiber.Ctx, data *logger.Data, _ *logger.Config) error {

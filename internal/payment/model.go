@@ -19,16 +19,16 @@ type CreatePaymentBody struct {
 
 // CreateManualPaymentBody is the request body for POST /payments/manual.
 type CreateManualPaymentBody struct {
-	OrderNumber    string         `json:"order_number"`
-	IdempotencyKey string         `json:"idempotency_key"`
-	Amount         int64          `json:"amount"`
-	Currency       string         `json:"currency"`
-	PlatformFee    int64          `json:"platform_fee"`
-	ShippingFee    int64          `json:"shipping_fee"`
-	PaymentMethod  string         `json:"payment_method"`
-	PaymentChannel string         `json:"payment_channel"`
-	Description    string         `json:"description"`
-	Metadata       map[string]any `json:"metadata"`
+	OrderNumber    string            `json:"order_number"`
+	IdempotencyKey string            `json:"idempotency_key"`
+	Amount         int64             `json:"amount"`
+	Currency       string            `json:"currency"`
+	PlatformFee    int64             `json:"platform_fee"`
+	ShippingFee    int64             `json:"shipping_fee"`
+	PaymentMethod  string            `json:"payment_method"`
+	PaymentChannel string            `json:"payment_channel"`
+	Description    string            `json:"description"`
+	Metadata       map[string]string `json:"metadata"`
 }
 
 // ReplayWebhookBody is the request body for POST /payments/webhooks/{event_id}/replay.

@@ -4,19 +4,19 @@
 package account
 
 import (
-	"errors"
 	"time"
 
+	"github.com/dengankarya/connector/common"
 	"github.com/google/uuid"
 )
 
 var (
-	ErrNotFound            = errors.New("transaction not found")
-	ErrInsufficientBalance = errors.New("insufficient shipping balance")
-	ErrHoldNotFound        = errors.New("shipping hold not found")
-	ErrHoldAlreadyActioned = errors.New("shipping hold already confirmed or released")
-	ErrDuplicateHold       = errors.New("an active hold already exists for this order")
-	ErrInvalidCursor       = errors.New("invalid pagination cursor")
+	ErrNotFound            = common.NewDomainError("NF_TRANSACTION_NOT_FOUND", "transaction not found")
+	ErrInsufficientBalance = common.ErrInsufficientBalance // PR_INSUFFICIENT_BALANCE
+	ErrHoldNotFound        = common.NewDomainError("NF_HOLD_NOT_FOUND", "shipping hold not found")
+	ErrHoldAlreadyActioned = common.NewDomainError("CF_HOLD_ALREADY_ACTIONED", "shipping hold already confirmed or released")
+	ErrDuplicateHold       = common.NewDomainError("CF_DUPLICATE_HOLD", "an active hold already exists for this order")
+	ErrInvalidCursor       = common.NewDomainError("BR_INVALID_CURSOR", "invalid pagination cursor")
 )
 
 // TransactionFilter controls cursor-paginated listing of account activity.
@@ -68,10 +68,11 @@ type LedgerEntry struct {
 }
 
 // ActivityDetail is the full detail for a single activity item.
-// LedgerEntries is populated for payment type items only.
+// LedgerEntries and Metadata are populated for payment type items only.
 type ActivityDetail struct {
 	ActivityItem
-	LedgerEntries []LedgerEntry `json:"ledger_entries,omitempty"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
+	LedgerEntries []LedgerEntry  `json:"ledger_entries,omitempty"`
 }
 
 // ─── Shipping balance types ───────────────────────────────────────────────────
@@ -144,6 +145,16 @@ type MerchantPaymentBalance struct {
 	AvailableToPayout int64 `json:"available_to_payout"`
 
 	Currency string `json:"currency"`
+}
+
+// UnifiedBalance is the combined merchant wallet view returned by GET /accounts/balance.
+// It merges the shipping wallet (available/on-hold) with the transaction-derived
+// payment settlement balance (settled/pending/paid-out).
+type UnifiedBalance struct {
+	// Shipping wallet — available funds and funds on hold for pending shipments.
+	Shipping *ShippingBalance `json:"shipping"`
+	// Payment settlement — computed from payment_transactions and payment_payouts.
+	Payment *MerchantPaymentBalance `json:"payment"`
 }
 
 // ─── Request body types (used by Swagger) ────────────────────────────────────

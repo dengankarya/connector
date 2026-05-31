@@ -100,6 +100,16 @@ func (c *Client) CreateShipment(ctx context.Context, req shippingProvider.Create
 	return mapCreateOrderResponse(resp), nil
 }
 
+// ConfirmShipment implements provider.ShippingProvider — promotes a Biteship draft order to a live order.
+// providerDraftOrderID is the Biteship draft order ID stored in domain.Shipment.ProviderDraftOrderID.
+func (c *Client) ConfirmShipment(ctx context.Context, providerDraftOrderID string) (*domain.Shipment, error) {
+	var resp CreateOrderResponse
+	if err := c.post(ctx, "/v1/draft_orders/"+providerDraftOrderID+"/confirm", nil, &resp); err != nil {
+		return nil, err
+	}
+	return mapConfirmOrderResponse(resp), nil
+}
+
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────
 
 func (c *Client) post(ctx context.Context, path string, body []byte, out any) error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -112,6 +113,19 @@ func (s *Service) GetBalance(ctx context.Context, tenantID int64) (*ShippingBala
 // Settled/pending figures are aggregated from payment_transactions; paid_out from payment_payouts.
 func (s *Service) GetPaymentBalance(ctx context.Context, tenantID int64) (*MerchantPaymentBalance, error) {
 	return s.repo.GetPaymentBalance(ctx, tenantID)
+}
+
+// GetUnifiedBalance returns the combined shipping wallet and payment settlement balance.
+func (s *Service) GetUnifiedBalance(ctx context.Context, tenantID int64) (*UnifiedBalance, error) {
+	shipping, err := s.repo.GetBalance(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("unified balance: shipping: %w", err)
+	}
+	payment, err := s.repo.GetPaymentBalance(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("unified balance: payment: %w", err)
+	}
+	return &UnifiedBalance{Shipping: shipping, Payment: payment}, nil
 }
 
 // TopupRequest is the input for a manual balance top-up.
@@ -278,6 +292,64 @@ func (s *Service) ReleaseHold(ctx context.Context, tenantID int64, holdID uuid.U
 		"hold_id":   holdID,
 	}).Info("shipping hold released")
 	return hold, nil
+}
+
+// ValidateShippingConfirm checks whether the tenant has sufficient funds to confirm a shipment.
+// If an active hold exists for the order, it is treated as pre-reserved and the check passes.
+// Otherwise, available_balance must be >= requiredAmount.
+// Returns ErrInsufficientBalance when funds are insufficient.
+func (s *Service) ValidateShippingConfirm(ctx context.Context, tenantID int64, orderNumber string, requiredAmount int64) error {
+	_, err := s.repo.GetHoldByOrderNumber(ctx, tenantID, orderNumber)
+	if err == nil {
+		return nil // active hold exists — funds already reserved
+	}
+	if !errors.Is(err, ErrHoldNotFound) {
+		return fmt.Errorf("validate shipping confirm: lookup hold: %w", err)
+	}
+	// No hold — check available balance directly.
+	bal, err := s.repo.GetBalance(ctx, tenantID)
+	if err != nil {
+		return fmt.Errorf("validate shipping confirm: get balance: %w", err)
+	}
+	if bal.Available < requiredAmount {
+		return ErrInsufficientBalance
+	}
+	return nil
+}
+
+// ConfirmHoldForOrder confirms the active shipping hold for the given order number.
+// It is a no-op when no active hold exists or the hold is already actioned.
+func (s *Service) ConfirmHoldForOrder(ctx context.Context, tenantID int64, orderNumber string) error {
+	hold, err := s.repo.GetHoldByOrderNumber(ctx, tenantID, orderNumber)
+	if err != nil {
+		if errors.Is(err, ErrHoldNotFound) {
+			return nil // no active hold — nothing to do
+		}
+		return fmt.Errorf("confirm hold for order %q: lookup: %w", orderNumber, err)
+	}
+	_, err = s.ConfirmHold(ctx, tenantID, hold.ID)
+	if errors.Is(err, ErrHoldAlreadyActioned) {
+		return nil // idempotent
+	}
+	return err
+}
+
+// ReleaseHoldForOrder releases the active shipping hold for the given order number,
+// returning the reserved funds to the available balance.
+// It is a no-op when no active hold exists or the hold is already actioned.
+func (s *Service) ReleaseHoldForOrder(ctx context.Context, tenantID int64, orderNumber string) error {
+	hold, err := s.repo.GetHoldByOrderNumber(ctx, tenantID, orderNumber)
+	if err != nil {
+		if errors.Is(err, ErrHoldNotFound) {
+			return nil
+		}
+		return fmt.Errorf("release hold for order %q: lookup: %w", orderNumber, err)
+	}
+	_, err = s.ReleaseHold(ctx, tenantID, hold.ID)
+	if errors.Is(err, ErrHoldAlreadyActioned) {
+		return nil
+	}
+	return err
 }
 
 // ListHolds returns all holds for a tenant.

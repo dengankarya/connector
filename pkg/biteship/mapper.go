@@ -270,6 +270,34 @@ func mapCreateShipmentRequest(req provider.CreateShipmentRequest) CreateOrderReq
 	return payload
 }
 
+// mapConfirmOrderResponse maps a Biteship confirm draft order response to a domain.Shipment.
+// In the confirm response, "id" is the live order ID and "draft_order_id" is the original draft ID.
+func mapConfirmOrderResponse(resp CreateOrderResponse) *domain.Shipment {
+	shipment := &domain.Shipment{
+		Provider:           "biteship",
+		ProviderOrderID:    &resp.ID,
+		CourierCode:        resp.Courier.Company,
+		CourierServiceCode: resp.Courier.Type,
+		ShippingCost:       resp.Price,
+		Status:             MapStatus(resp.Status),
+	}
+	if resp.DraftOrderID != nil {
+		shipment.ProviderDraftOrderID = resp.DraftOrderID
+	}
+	if resp.Courier.WaybillID != nil {
+		shipment.TrackingNumber = *resp.Courier.WaybillID
+	}
+	if resp.Courier.Link != nil {
+		shipment.TrackingURL = *resp.Courier.Link
+	}
+	if resp.ConfirmedAt != nil {
+		shipment.ConfirmedAt = resp.ConfirmedAt
+	} else if resp.ReadyAt != nil {
+		shipment.ConfirmedAt = resp.ReadyAt
+	}
+	return shipment
+}
+
 func mapCreateOrderResponse(resp CreateOrderResponse) *domain.Shipment {
 	shipment := &domain.Shipment{
 		Provider:             "biteship",
