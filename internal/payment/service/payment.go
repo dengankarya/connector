@@ -39,6 +39,7 @@ type CreatePaymentRequest struct {
 	CustomerReferenceID    string
 	ExpiresAt              *time.Time
 	Metadata               map[string]string
+	Provider               string // optional; "xendit" (default) or "midtrans"
 }
 
 // ShippingBalanceCreditor credits a merchant's shipping balance from the shipping_fee
@@ -51,7 +52,8 @@ type ShippingBalanceCreditor interface {
 type PaymentService struct {
 	txnRepo          *repository.TransactionRepository
 	snapshotRepo     *repository.SettlementSnapshotRepository
-	provider         provider.PaymentProvider
+	provider         provider.PaymentProvider            // default provider
+	providers        map[string]provider.PaymentProvider  // registry of all available providers
 	ledger           *ledger.Service
 	txRunner         *repository.TxRunner
 	shippingCreditor ShippingBalanceCreditor // optional; nil = skip
@@ -60,6 +62,7 @@ type PaymentService struct {
 
 // NewPaymentService creates a PaymentService.
 // shippingCreditor may be nil — shipping balance credit is skipped when not configured.
+// additionalProviders is an optional list of extra providers to register alongside the default.
 func NewPaymentService(
 	txnRepo *repository.TransactionRepository,
 	prov provider.PaymentProvider,
@@ -68,11 +71,22 @@ func NewPaymentService(
 	ledgerSvc *ledger.Service,
 	shippingCreditor ShippingBalanceCreditor,
 	logger *logrus.Logger,
+	additionalProviders ...provider.PaymentProvider,
 ) *PaymentService {
+	providers := make(map[string]provider.PaymentProvider)
+	if prov != nil {
+		providers[prov.ProviderName()] = prov
+	}
+	for _, p := range additionalProviders {
+		if p != nil {
+			providers[p.ProviderName()] = p
+		}
+	}
 	return &PaymentService{
 		txnRepo:          txnRepo,
 		snapshotRepo:     snapshotRepo,
 		provider:         prov,
+		providers:        providers,
 		ledger:           ledgerSvc,
 		txRunner:         txRunner,
 		shippingCreditor: shippingCreditor,
@@ -84,6 +98,12 @@ func NewPaymentService(
 // Idempotent: if a transaction with the same (tenant_id, idempotency_key) already exists,
 // it returns the existing record without hitting the provider again.
 func (s *PaymentService) CreatePayment(ctx context.Context, req CreatePaymentRequest) (*domain.PaymentTransaction, error) {
+	// Select provider: per-request override or default.
+	selectedProvider := s.resolveProvider(req.Provider)
+	if selectedProvider == nil {
+		return nil, fmt.Errorf("unknown payment provider: %q", req.Provider)
+	}
+
 	log := s.logger.WithFields(logrus.Fields{
 		"component":       "payment_service",
 		"operation":       "create_payment",
@@ -92,6 +112,7 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req CreatePaymentReq
 		"idempotency_key": req.IdempotencyKey,
 		"amount":          req.Amount,
 		"currency":        req.Currency,
+		"provider":        selectedProvider.ProviderName(),
 	})
 
 	merchantAmount := req.Amount - req.PlatformFee - req.ShippingFee
@@ -99,8 +120,8 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req CreatePaymentReq
 		return nil, fmt.Errorf("platform_fee (%d) + shipping_fee (%d) exceeds amount (%d)", req.PlatformFee, req.ShippingFee, req.Amount)
 	}
 
-	// Merge caller metadata with platform-level fields visible on the Xendit dashboard.
-	// tenant_id lets you filter master-account transactions by merchant on Xendit.
+	// Merge caller metadata with platform-level fields visible on the provider dashboard.
+	// tenant_id lets you filter transactions by merchant.
 	meta := make(map[string]string, len(req.Metadata)+2)
 	for k, v := range req.Metadata {
 		meta[k] = v
@@ -110,8 +131,8 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req CreatePaymentReq
 		meta["order_number"] = req.OrderNumber
 	}
 
-	// Step 1: Create a Xendit Payment Session (hosted checkout).
-	invoice, err := s.provider.CreateInvoice(ctx, provider.CreateInvoiceRequest{
+	// Step 1: Create a payment session at the selected provider.
+	invoice, err := selectedProvider.CreateInvoice(ctx, provider.CreateInvoiceRequest{
 		ExternalID:             req.IdempotencyKey,
 		Amount:                 req.Amount,
 		Currency:               req.Currency,
@@ -137,7 +158,7 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req CreatePaymentReq
 		TenantID:          req.TenantID,
 		OrderNumber:       req.OrderNumber,
 		IdempotencyKey:    req.IdempotencyKey,
-		Provider:          s.provider.ProviderName(),
+		Provider:          selectedProvider.ProviderName(),
 		ProviderInvoiceID: invoice.ProviderInvoiceID,
 		CheckoutURL:       invoice.CheckoutURL,
 		Amount:            req.Amount,
@@ -181,12 +202,18 @@ func (s *PaymentService) RefreshPayment(ctx context.Context, tenantID int64, txn
 		return nil, domain.ErrNotFound{Entity: "payment_transaction", ID: txnID.String()}
 	}
 
-	// Nothing to fetch for final states or manual payments (no Xendit session).
+	// Nothing to fetch for final states or manual payments (no provider session).
 	if txn.IsFinalState() || strings.HasPrefix(txn.ProviderInvoiceID, "manual-") {
 		return txn, nil
 	}
 
-	invoice, err := s.provider.GetInvoice(ctx, txn.ProviderInvoiceID)
+	// Look up the correct provider for this transaction.
+	txnProvider := s.resolveProvider(txn.Provider)
+	if txnProvider == nil {
+		return nil, fmt.Errorf("refresh payment: unknown provider %q for transaction %s", txn.Provider, txnID)
+	}
+
+	invoice, err := txnProvider.GetInvoice(ctx, txn.ProviderInvoiceID)
 	if err != nil {
 		return nil, fmt.Errorf("refresh payment: fetch from provider: %w", err)
 	}
@@ -503,4 +530,19 @@ func decodeCursor(s string) (*repository.CursorPoint, error) {
 		return nil, fmt.Errorf("invalid id in cursor: %w", err)
 	}
 	return &repository.CursorPoint{CreatedAt: p.T, ID: id}, nil
+}
+
+// ─── provider resolution ──────────────────────────────────────────────────────
+
+// resolveProvider returns the provider for the given name.
+// If name is empty, returns the default provider.
+// Returns nil if the provider is not registered.
+func (s *PaymentService) resolveProvider(name string) provider.PaymentProvider {
+	if name == "" {
+		return s.provider
+	}
+	if p, ok := s.providers[name]; ok {
+		return p
+	}
+	return nil
 }

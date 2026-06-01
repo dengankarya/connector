@@ -170,6 +170,106 @@ func RegisterWebhookHandlerV2(
 	mux.Post("/webhook/xendit", ctrl.handleWebhook)
 }
 
+// ─── Midtrans webhook controller ──────────────────────────────────────────────
+
+type midtransController struct {
+	enqueuer         *asynq.Client
+	paymentProcessor *webhook.Processor
+	midtransProvider provider.PaymentProvider
+	requestLogRepo   *repository.WebhookRequestLogRepository
+}
+
+// handleMidtransWebhook is the public Midtrans notification endpoint.
+// Midtrans sends a flat JSON body with signature_key inside the payload
+// (not in headers like Xendit). Validates signature, stores the event,
+// and enqueues async processing. Always returns HTTP 200.
+func (ctrl *midtransController) handleMidtransWebhook(c fiber.Ctx) error {
+	requestID := string(c.Request().Header.Peek("X-Request-ID"))
+	if requestID == "" {
+		requestID = uuid.New().String()
+	}
+	c.Set("X-Request-ID", requestID)
+
+	// ── Audit log ────────────────────────────────────────────────────────────
+	if ctrl.requestLogRepo != nil {
+		sourceIP := c.IP()
+		rawBody := make([]byte, len(c.Body()))
+		copy(rawBody, c.Body())
+		headers := make(map[string]string)
+		c.Request().Header.VisitAll(func(k, v []byte) {
+			headers[string(k)] = string(v)
+		})
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := ctrl.requestLogRepo.Create(ctx, sourceIP, rawBody, headers); err != nil {
+				logrus.WithFields(logrus.Fields{
+					"component":  "midtrans_webhook_controller",
+					"request_id": requestID,
+				}).WithError(err).Warn("failed to write webhook request log")
+			}
+		}()
+	}
+
+	log := logrus.WithFields(logrus.Fields{
+		"component":  "midtrans_webhook_controller",
+		"request_id": requestID,
+	})
+
+	rawBody := c.Body()
+
+	// Validate signature from the payload body (not from headers).
+	if err := ctrl.midtransProvider.ValidateWebhookSignature(c.Context(), rawBody, nil); err != nil {
+		log.WithError(err).Warn("midtrans webhook: signature validation failed")
+		// Return 200 to prevent Midtrans from retrying; log the security event.
+		return c.Status(http.StatusOK).JSON(common.Response{Status: "OK"})
+	}
+
+	headers := make(map[string]string)
+	c.Request().Header.VisitAll(func(key, value []byte) {
+		headers[string(key)] = string(value)
+	})
+
+	// Ingest: store raw event and get the assigned UUID.
+	eventID, isDuplicate, err := ctrl.paymentProcessor.Ingest(c.Context(), rawBody, headers, ctrl.midtransProvider)
+	if err != nil {
+		log.WithError(err).Error("midtrans webhook: ingest failed")
+		return c.Status(http.StatusOK).JSON(common.Response{Status: "OK"})
+	}
+
+	if isDuplicate {
+		return c.Status(http.StatusOK).JSON(common.Response{Status: "OK"})
+	}
+
+	// Enqueue async processing.
+	task, opts := webhook.NewTask(eventID)
+	if _, err := ctrl.enqueuer.EnqueueContext(c.Context(), task, opts...); err != nil {
+		log.WithFields(logrus.Fields{
+			"webhook_event_id": eventID,
+			"error":            err.Error(),
+		}).Error("midtrans webhook: enqueue failed — event stored, will be retried by job")
+	}
+
+	return c.Status(http.StatusOK).JSON(common.Response{Status: "OK"})
+}
+
+// RegisterMidtransWebhookHandler registers the Midtrans webhook endpoint on the public router.
+func RegisterMidtransWebhookHandler(
+	mux fiber.Router,
+	enqueuer *asynq.Client,
+	processor *webhook.Processor,
+	prov provider.PaymentProvider,
+	requestLogRepo *repository.WebhookRequestLogRepository,
+) {
+	ctrl := midtransController{
+		enqueuer:         enqueuer,
+		paymentProcessor: processor,
+		midtransProvider: prov,
+		requestLogRepo:   requestLogRepo,
+	}
+	mux.Post("/webhook/midtrans", ctrl.handleMidtransWebhook)
+}
+
 // createPayment godoc
 //
 //	@Summary		Create payment session
@@ -208,6 +308,7 @@ func (ctrl *paymentController) createPayment(c fiber.Ctx) error {
 		CustomerName           string            `json:"customer_name"`
 		CustomerReferenceID    string            `json:"customer_reference_id"`
 		Metadata               map[string]string `json:"metadata"`
+		Provider               string            `json:"provider"` // optional; "xendit" (default) or "midtrans"
 	}
 	if err := c.Bind().JSON(&body); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(common.Response{
@@ -237,6 +338,7 @@ func (ctrl *paymentController) createPayment(c fiber.Ctx) error {
 		CustomerName:           body.CustomerName,
 		CustomerReferenceID:    body.CustomerReferenceID,
 		Metadata:               body.Metadata,
+		Provider:               body.Provider,
 	})
 	if err != nil {
 		ctrl.logger.WithError(err).Error("create payment failed")
@@ -508,7 +610,7 @@ func (ctrl *paymentController) listTransactions(c fiber.Ctx) error {
 	if paymentProvider != "" {
 		// Validate provider value if necessary (e.g. against a list of known providers)
 		// For now, we just pass it through to the service layer for filtering.
-		if paymentProvider != "xendit" && paymentProvider != "manual_transfer" {
+		if paymentProvider != "xendit" && paymentProvider != "manual_transfer" && paymentProvider != "midtrans" {
 			return c.Status(http.StatusBadRequest).JSON(common.Response{
 				Status: "Bad Request", Error: "invalid provider value",
 			})
