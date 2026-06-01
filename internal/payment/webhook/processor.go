@@ -232,6 +232,12 @@ func (p *Processor) Process(ctx context.Context, eventID uuid.UUID) error {
 //   - payment.capture           → payment captured
 //   - payment.authorization     → authorised pending capture; no-op for AUTOMATIC
 //   - payment.failure           → failed/expired (distinguished by failure_code)
+//
+// Midtrans events (normalised by midtrans mapper):
+//   - payment.capture           → settlement or capture (paid)
+//   - payment.expire            → transaction expired
+//   - payment.pending           → awaiting payment (no-op)
+//   - payment.refund            → refunded
 func (p *Processor) handle(ctx context.Context, event *domain.WebhookEvent, txn *domain.PaymentTransaction, log *logrus.Entry) error {
 	switch event.EventType {
 	// ── Sessions API ────────────────────────────────────────────────────────
@@ -243,7 +249,7 @@ func (p *Processor) handle(ctx context.Context, event *domain.WebhookEvent, txn 
 		details := parsePaymentDetails(event.RawPayload)
 		return p.handleFailed(ctx, event, txn, log, details.FailureCode)
 
-	// ── Payment Request API (compatibility) ─────────────────────────────────
+	// ── Payment Request API (Xendit compatibility) + Midtrans capture ─────
 	case "payment.capture":
 		return p.handlePaid(ctx, event, txn, log)
 	case "payment.authorization":
@@ -255,6 +261,16 @@ func (p *Processor) handle(ctx context.Context, event *domain.WebhookEvent, txn 
 			return p.handleExpired(ctx, event, txn, log)
 		}
 		return p.handleFailed(ctx, event, txn, log, details.FailureCode)
+
+	// ── Midtrans-specific events ─────────────────────────────────────────
+	case "payment.expire":
+		return p.handleExpired(ctx, event, txn, log)
+	case "payment.pending":
+		log.Info("payment pending — awaiting customer action")
+		return nil
+	case "payment.refund":
+		log.Info("payment refunded via provider — no automatic action")
+		return nil
 
 	default:
 		log.WithField("event_type", event.EventType).Warn("unhandled webhook event type — marking processed without action")
@@ -384,11 +400,18 @@ func (p *Processor) handleFailed(ctx context.Context, _ *domain.WebhookEvent, tx
 
 func extractInvoiceID(event *domain.WebhookEvent) string {
 	// Prefer extracting payment_session_id directly from the raw webhook payload —
-	// this is what we store as ProviderInvoiceID when the session is created.
+	// this is what we store as ProviderInvoiceID when the session is created (Xendit).
 	details := parsePaymentDetails(event.RawPayload)
 	if details.PaymentSessionID != "" {
 		return details.PaymentSessionID
 	}
+
+	// Try Midtrans format: flat JSON with order_id as the invoice lookup key.
+	mtDetails := parseMidtransPaymentDetails(event.RawPayload)
+	if mtDetails.OrderID != "" {
+		return mtDetails.OrderID
+	}
+
 	// Fallback: extract from composite ProviderEventID ("event_type:session_id").
 	for i := len(event.ProviderEventID) - 1; i >= 0; i-- {
 		if event.ProviderEventID[i] == ':' {
