@@ -27,6 +27,9 @@ type Configuration struct {
 	XenditBaseURL      string `env:"XENDIT_BASE_URL,notEmpty" envDefault:"https://api.xendit.co"`
 	XenditWebhookToken string `env:"XENDIT_WEBHOOK_TOKEN"`
 
+	MidtransServerKey string `env:"MIDTRANS_SERVER_KEY"`
+	MidtransBaseURL   string `env:"MIDTRANS_BASE_URL,notEmpty" envDefault:"https://app.sandbox.midtrans.com"`
+
 	TokokaryaURL    string `env:"TOKOKARYA_URL"`
 	TokokaryaAPIKey string `env:"TOKOKARYA_API_KEY"`
 
