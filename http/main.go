@@ -19,6 +19,7 @@ import (
 	"github.com/dengankarya/connector/internal/payment"
 	"github.com/dengankarya/connector/internal/payment/jobs"
 	"github.com/dengankarya/connector/internal/payment/ledger"
+	"github.com/dengankarya/connector/internal/payment/provider/midtrans"
 	"github.com/dengankarya/connector/internal/payment/provider/xendit"
 	"github.com/dengankarya/connector/internal/payment/repository"
 	paymentservice "github.com/dengankarya/connector/internal/payment/service"
@@ -123,13 +124,25 @@ func main() {
 
 		xenditProv := xendit.New(cfg.XenditAPIKey, cfg.XenditWebhookToken, cfg.XenditBaseURL)
 
+		// Optionally create Midtrans provider if configured.
+		var midtransProv *midtrans.Provider
+		if cfg.MidtransServerKey != "" {
+			midtransProv = midtrans.New(cfg.MidtransServerKey, cfg.MidtransBaseURL)
+			log.Info("midtrans provider enabled")
+		}
+
 		webhookProc = webhook.NewProcessor(eventRepo, txnRepo, ledgerSvc, txRunner, xenditProv, tokokaryaClient, balanceSvc, log.StandardLogger())
 		webhookHandler = webhook.NewAsynqHandler(webhookProc, log.StandardLogger())
 
 		// Asynq client needed for ReplayService — created before the section below.
 		_ = payoutRepo // used by PayoutService; wired separately if needed
 
-		paymentSvc = paymentservice.NewPaymentService(txnRepo, xenditProv, txRunner, snapshotRepo, ledgerSvc, balanceSvc, log.StandardLogger())
+		// Pass Midtrans as an additional provider if configured.
+		if midtransProv != nil {
+			paymentSvc = paymentservice.NewPaymentService(txnRepo, xenditProv, txRunner, snapshotRepo, ledgerSvc, balanceSvc, log.StandardLogger(), midtransProv)
+		} else {
+			paymentSvc = paymentservice.NewPaymentService(txnRepo, xenditProv, txRunner, snapshotRepo, ledgerSvc, balanceSvc, log.StandardLogger())
+		}
 
 		// Jobs
 		expireJob = jobs.NewExpirePaymentsJob(txnRepo, txRunner, log.StandardLogger())
@@ -208,6 +221,12 @@ func main() {
 	if cfg.DatabaseDSN != "" {
 		xenditProv := xendit.New(cfg.XenditAPIKey, cfg.XenditWebhookToken, cfg.XenditBaseURL)
 		payment.RegisterWebhookHandlerV2(apiRootGroup, cfg.XenditWebhookToken, asynqClient, webhookProc, xenditProv, requestLogRepo)
+
+		// ── Midtrans webhook — public, no API key check ─────────────────────
+		if cfg.MidtransServerKey != "" {
+			midtransProv := midtrans.New(cfg.MidtransServerKey, cfg.MidtransBaseURL)
+			payment.RegisterMidtransWebhookHandler(apiRootGroup, asynqClient, webhookProc, midtransProv, requestLogRepo)
+		}
 	}
 
 	// ── Authenticated routes ─────────────────────────────────────────────────
