@@ -884,6 +884,14 @@ definitions:
       force:
         type: boolean
     type: object
+  internal_payment.ScheduleOrderCancellationBody:
+    properties:
+      order_number:
+        type: string
+      should_expired_at:
+        description: Unix timestamp
+        type: integer
+    type: object
   internal_region.Area:
     properties:
       code:
@@ -1470,6 +1478,47 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Refresh payment transaction
+      tags:
+      - Payments
+  /payments/cancel-schedule:
+    post:
+      consumes:
+      - application/json
+      description: Schedules a one-shot job that calls Tokokarya's cancel-expired-orders
+        endpoint at the given Unix timestamp. Used by the frontend after a manual
+        payment is created to trigger automatic order cancellation if payment is not
+        confirmed.
+      parameters:
+      - description: Tenant ID
+        format: int64
+        in: header
+        name: X-Tenant-ID
+        required: true
+        type: integer
+      - description: Cancellation schedule request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_payment.ScheduleOrderCancellationBody'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Job scheduled
+          schema:
+            $ref: '#/definitions/common.Response'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Schedule order cancellation
       tags:
       - Payments
   /payments/manual:

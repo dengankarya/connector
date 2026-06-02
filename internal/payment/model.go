@@ -40,3 +40,9 @@ type ReplayWebhookBody struct {
 type ConfirmManualPaymentBody struct {
 	PaymentChannel string `json:"payment_channel"`
 }
+
+// ScheduleOrderCancellationBody is the request body for POST /payments/cancel-schedule.
+type ScheduleOrderCancellationBody struct {
+	OrderNumber    string `json:"order_number"`
+	ShouldExpireAt int64  `json:"should_expired_at"` // Unix timestamp
+}

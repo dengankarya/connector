@@ -77,22 +77,23 @@ func main() {
 
 	// ── PostgreSQL ──────────────────────────────────────────────────────────
 	var (
-		txnRepo        *repository.TransactionRepository
-		eventRepo      *repository.WebhookEventRepository
-		ledgerRepo     *repository.LedgerRepository
-		payoutRepo     *repository.PayoutRepository
-		txRunner       *repository.TxRunner
-		snapshotRepo   *repository.SettlementSnapshotRepository
-		ledgerSvc      *ledger.Service
-		webhookProc    *webhook.Processor
-		webhookHandler *webhook.AsynqHandler
-		replaySvc      *webhook.ReplayService
-		paymentSvc     *paymentservice.PaymentService
-		expireJob      *jobs.ExpirePaymentsJob
-		retryJob       *jobs.RetryWebhooksJob
-		syncJob        *jobs.SyncSettlementJob
-		shipmentRepo   *shipmentrepo.ShipmentRepository
-		balanceSvc     *account.Service
+		txnRepo               *repository.TransactionRepository
+		eventRepo             *repository.WebhookEventRepository
+		ledgerRepo            *repository.LedgerRepository
+		payoutRepo            *repository.PayoutRepository
+		txRunner              *repository.TxRunner
+		snapshotRepo          *repository.SettlementSnapshotRepository
+		ledgerSvc             *ledger.Service
+		webhookProc           *webhook.Processor
+		webhookHandler        *webhook.AsynqHandler
+		replaySvc             *webhook.ReplayService
+		paymentSvc            *paymentservice.PaymentService
+		expireJob             *jobs.ExpirePaymentsJob
+		retryJob              *jobs.RetryWebhooksJob
+		syncJob               *jobs.SyncSettlementJob
+		cancelExpiredOrderJob *jobs.CancelExpiredOrderJob
+		shipmentRepo          *shipmentrepo.ShipmentRepository
+		balanceSvc            *account.Service
 	)
 
 	var requestLogRepo *repository.WebhookRequestLogRepository
@@ -153,10 +154,14 @@ func main() {
 		retryJob = jobs.NewRetryWebhooksJob(replaySvc, log.StandardLogger())
 	}
 
+	// CancelExpiredOrderJob only needs the Tokokarya client — no DB dependency.
+	cancelExpiredOrderJob = jobs.NewCancelExpiredOrderJob(tokokaryaClient, log.StandardLogger())
+
 	workerServer := worker.NewServer(cfg.RedisURL)
 	workerMux := worker.NewMux(worker.MuxOptions{
 		WebhookEventHandler: webhookHandler, // nil-safe: NewMux checks for nil
 	})
+	workerMux.HandleFunc(worker.TaskCancelExpiredOrder, cancelExpiredOrderJob.ProcessTask)
 	go func() {
 		if err := workerServer.Start(workerMux); err != nil {
 			log.WithError(err).Fatal("asynq worker server failed")
@@ -233,6 +238,7 @@ func main() {
 			apiRootGroup.Group("/payments"),
 			paymentSvc,
 			replaySvc,
+			asynqClient,
 			log.StandardLogger(),
 		)
 	}

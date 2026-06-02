@@ -3,6 +3,7 @@ package tokokarya
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -32,6 +33,15 @@ func (c *Client) ForwardWebhook(ctx context.Context, payload []byte) error {
 // ForwardShipmentWebhook forwards a raw Biteship shipment webhook payload to Tokokarya.
 func (c *Client) ForwardShipmentWebhook(ctx context.Context, payload []byte) error {
 	return c.post(ctx, "/api/webhooks/biteship", payload)
+}
+
+// CancelExpiredOrders notifies Tokokarya to cancel a specific order via the cron endpoint.
+func (c *Client) CancelExpiredOrders(ctx context.Context, orderNumber string) error {
+	body, err := json.Marshal(map[string]string{"order_number": orderNumber})
+	if err != nil {
+		return err
+	}
+	return c.post(ctx, "/api/cron/cancel-expired-orders", body)
 }
 
 func (c *Client) post(ctx context.Context, path string, body []byte) error {
