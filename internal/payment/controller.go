@@ -10,6 +10,7 @@ import (
 
 	"github.com/dengankarya/connector/common"
 	"github.com/dengankarya/connector/internal/payment/domain"
+	"github.com/dengankarya/connector/internal/payment/jobs"
 	"github.com/dengankarya/connector/internal/payment/provider"
 	"github.com/dengankarya/connector/internal/payment/repository"
 	paymentservice "github.com/dengankarya/connector/internal/payment/service"
@@ -130,6 +131,7 @@ func (ctrl *controller) handleWebhook(c fiber.Ctx) error {
 type paymentController struct {
 	svc       *paymentservice.PaymentService
 	replaySvc *webhook.ReplayService
+	enqueuer  *asynq.Client
 	logger    *logrus.Logger
 }
 
@@ -138,12 +140,14 @@ func RegisterPaymentHandlers(
 	mux fiber.Router,
 	svc *paymentservice.PaymentService,
 	replaySvc *webhook.ReplayService,
+	enqueuer *asynq.Client,
 	logger *logrus.Logger,
 ) {
-	ctrl := &paymentController{svc: svc, replaySvc: replaySvc, logger: logger}
+	ctrl := &paymentController{svc: svc, replaySvc: replaySvc, enqueuer: enqueuer, logger: logger}
 	mux.Get("/transactions", ctrl.listTransactions)
 
 	mux.Post("/", ctrl.createPayment)
+	mux.Post("/cancel-schedule", ctrl.scheduleOrderCancellation)
 	mux.Post("/manual", ctrl.createManualPayment)
 	mux.Post("/manual/:id/confirm", ctrl.confirmManualPayment)
 	mux.Get("/:id", ctrl.getPayment)
@@ -427,6 +431,62 @@ func (ctrl *paymentController) confirmManualPayment(c fiber.Ctx) error {
 	}
 
 	return c.Status(http.StatusOK).JSON(common.Response{Status: "OK", Data: txn})
+}
+
+// scheduleOrderCancellation godoc
+//
+//	@Summary		Schedule order cancellation
+//	@Description	Schedules a one-shot job that calls Tokokarya's cancel-expired-orders endpoint at the given Unix timestamp. Used by the frontend after a manual payment is created to trigger automatic order cancellation if payment is not confirmed.
+//	@Tags			Payments
+//	@Accept			json
+//	@Produce		json
+//	@Param			X-Tenant-ID	header		int64							true	"Tenant ID"
+//	@Param			body		body		ScheduleOrderCancellationBody	true	"Cancellation schedule request"
+//	@Success		202			{object}	common.Response					"Job scheduled"
+//	@Failure		400			{object}	common.Response					"Invalid request"
+//	@Failure		500			{object}	common.Response					"Internal server error"
+//	@Security		ApiKeyAuth
+//	@Router			/payments/cancel-schedule [post]
+func (ctrl *paymentController) scheduleOrderCancellation(c fiber.Ctx) error {
+	var body ScheduleOrderCancellationBody
+	if err := c.Bind().JSON(&body); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: err.Error(),
+		})
+	}
+
+	if body.OrderNumber == "" {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: "order_number is required",
+		})
+	}
+	if body.ShouldExpireAt <= 0 {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: "should_expired_at must be a valid Unix timestamp",
+		})
+	}
+
+	processAt := time.Unix(body.ShouldExpireAt, 0)
+	task, opts := jobs.NewCancelExpiredOrderTask(body.OrderNumber, processAt)
+
+	if _, err := ctrl.enqueuer.EnqueueContext(c.Context(), task, opts...); err != nil {
+		ctrl.logger.WithFields(logrus.Fields{
+			"order_number":     body.OrderNumber,
+			"should_expire_at": body.ShouldExpireAt,
+			"error":            err.Error(),
+		}).Error("schedule order cancellation: enqueue failed")
+		return c.Status(http.StatusInternalServerError).JSON(common.Response{
+			Status: "Internal Server Error", Error: "failed to schedule order cancellation",
+		})
+	}
+
+	return c.Status(http.StatusAccepted).JSON(common.Response{
+		Status: "Accepted",
+		Data: map[string]any{
+			"order_number":     body.OrderNumber,
+			"should_expire_at": body.ShouldExpireAt,
+		},
+	})
 }
 
 // refreshPayment godoc

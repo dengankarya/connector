@@ -775,6 +775,65 @@ const docTemplate = `{
                 }
             }
         },
+        "/payments/cancel-schedule": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Schedules a one-shot job that calls Tokokarya's cancel-expired-orders endpoint at the given Unix timestamp. Used by the frontend after a manual payment is created to trigger automatic order cancellation if payment is not confirmed.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Schedule order cancellation",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "Tenant ID",
+                        "name": "X-Tenant-ID",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Cancellation schedule request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_payment.ScheduleOrderCancellationBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Job scheduled",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/payments/manual": {
             "post": {
                 "security": [
@@ -3173,6 +3232,18 @@ const docTemplate = `{
             "properties": {
                 "force": {
                     "type": "boolean"
+                }
+            }
+        },
+        "internal_payment.ScheduleOrderCancellationBody": {
+            "type": "object",
+            "properties": {
+                "order_number": {
+                    "type": "string"
+                },
+                "should_expired_at": {
+                    "description": "Unix timestamp",
+                    "type": "integer"
                 }
             }
         },
