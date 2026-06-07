@@ -368,6 +368,19 @@ func (s *PaymentService) ConfirmManualPayment(ctx context.Context, req ConfirmMa
 
 		if err := txn.TransitionTo(domain.StatusPaid); err != nil {
 			if errors.As(err, new(domain.ErrAlreadyInState)) {
+				// Already paid — check if we still need to settle.
+				if txn.Status != domain.StatusSettled {
+					if serr := txn.TransitionTo(domain.StatusSettled); serr != nil {
+						if !errors.As(serr, new(domain.ErrAlreadyInState)) {
+							return fmt.Errorf("confirm manual payment: settle: %w", serr)
+						}
+					}
+					now := time.Now().UTC()
+					txn.SettledAt = &now
+					if err := s.txnRepo.Update(txCtx, txn); err != nil {
+						return fmt.Errorf("confirm manual payment: update settled: %w", err)
+					}
+				}
 				log.Info("manual payment already confirmed — idempotent")
 				return nil
 			}
@@ -379,6 +392,18 @@ func (s *PaymentService) ConfirmManualPayment(ctx context.Context, req ConfirmMa
 		if req.PaymentChannel != "" {
 			txn.PaymentChannel = req.PaymentChannel
 		}
+
+		// Manual payments are immediately settled — the funds are already in the
+		// merchant's hands (cash / direct bank transfer), so there is no Xendit
+		// escrow period to wait for. Transition paid → settled in the same tx.
+		if err := txn.TransitionTo(domain.StatusSettled); err != nil {
+			return fmt.Errorf("confirm manual payment: settle: %w", err)
+		}
+		txn.SettledAt = &now
+		// Both transitions bumped Version, but we're doing a single DB write.
+		// Roll back one increment so Update's WHERE version = txn.Version-1 matches
+		// the actual DB row (which hasn't been written yet).
+		txn.Version--
 
 		if err := s.txnRepo.Update(txCtx, txn); err != nil {
 			return fmt.Errorf("confirm manual payment: update: %w", err)

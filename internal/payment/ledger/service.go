@@ -42,10 +42,21 @@ func (s *Service) RecordPayment(ctx context.Context, txn *domain.PaymentTransact
 	return s.write(ctx, journal, txn.ID, "record_payment")
 }
 
-// RecordManualPayment creates the same ledger entries as RecordPayment but with no
-// linked webhook event — used for manual payment confirmations via the confirm endpoint.
+// RecordManualPayment creates ledger entries for a manually-confirmed payment.
+//
+// Unlike Xendit payments, manual payments (cash / direct bank transfer) never flow
+// through platform escrow — the merchant already holds the funds. We therefore do NOT
+// debit escrow or credit merchant_payable (which would imply a platform custody
+// obligation that doesn't exist).
+//
+// Journal:
+//
+//	DR  merchant_direct    amount          (off-platform funds held by merchant)
+//	CR  merchant_direct    merchant_amount (net amount retained by merchant)
+//	CR  platform_fee       platform_fee    (if > 0, platform revenue earned)
+//	CR  shipping_balance   shipping_fee    (if > 0, shipping credit topped up)
 func (s *Service) RecordManualPayment(ctx context.Context, txn *domain.PaymentTransaction) error {
-	journal, err := buildPaymentJournal(txn, nil)
+	journal, err := buildManualPaymentJournal(txn)
 	if err != nil {
 		return err
 	}
@@ -191,6 +202,67 @@ func (s *Service) write(ctx context.Context, j *domain.LedgerJournal, txnID uuid
 }
 
 // ─── journal builders ─────────────────────────────────────────────────────────
+
+// buildManualPaymentJournal constructs the ledger journal for a manual payment.
+// Funds never touched platform escrow, so we use merchant_direct instead of escrow/merchant_payable.
+func buildManualPaymentJournal(txn *domain.PaymentTransaction) (*domain.LedgerJournal, error) {
+	if err := txn.Validate(); err != nil {
+		return nil, fmt.Errorf("build manual payment journal: %w", err)
+	}
+
+	baseRef := fmt.Sprintf("txn:%s:manual_paid", txn.ID)
+
+	entries := []domain.LedgerEntry{
+		{
+			TenantID:      txn.TenantID,
+			TransactionID: txn.ID,
+			AccountType:   domain.AccountMerchantDirect,
+			Direction:     domain.DirectionDebit, // acknowledges that merchant received this gross amount
+			Amount:        txn.Amount,
+			Currency:      txn.Currency,
+			ReferenceID:   baseRef + ":direct_debit",
+			Description:   "Gross payment received directly by merchant (off-platform)",
+		},
+		{
+			TenantID:      txn.TenantID,
+			TransactionID: txn.ID,
+			AccountType:   domain.AccountMerchantDirect,
+			Direction:     domain.DirectionCredit,
+			Amount:        txn.MerchantAmount,
+			Currency:      txn.Currency,
+			ReferenceID:   baseRef + ":direct_credit",
+			Description:   "Net amount retained by merchant",
+		},
+	}
+
+	if txn.PlatformFee > 0 {
+		entries = append(entries, domain.LedgerEntry{
+			TenantID:      txn.TenantID,
+			TransactionID: txn.ID,
+			AccountType:   domain.AccountPlatformFee,
+			Direction:     domain.DirectionCredit,
+			Amount:        txn.PlatformFee,
+			Currency:      txn.Currency,
+			ReferenceID:   baseRef + ":platform_fee",
+			Description:   "Platform fee revenue (manual payment)",
+		})
+	}
+
+	if txn.ShippingFee > 0 {
+		entries = append(entries, domain.LedgerEntry{
+			TenantID:      txn.TenantID,
+			TransactionID: txn.ID,
+			AccountType:   domain.AccountShippingBalance,
+			Direction:     domain.DirectionCredit,
+			Amount:        txn.ShippingFee,
+			Currency:      txn.Currency,
+			ReferenceID:   baseRef + ":shipping_balance",
+			Description:   "Shipping balance topped up for merchant (manual payment)",
+		})
+	}
+
+	return &domain.LedgerJournal{Entries: entries}, nil
+}
 
 func buildPaymentJournal(txn *domain.PaymentTransaction, eventID *uuid.UUID) (*domain.LedgerJournal, error) {
 	if err := txn.Validate(); err != nil {

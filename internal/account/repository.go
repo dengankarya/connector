@@ -120,7 +120,8 @@ func (r *Repository) ListActivity(ctx context.Context, tenantID int64, p Activit
 	q := fmt.Sprintf(`
 		SELECT id, type, amount, currency, order_number, status, note, created_at FROM (
 
-			-- Full payment transactions (customer orders)
+			-- Full payment transactions (customer orders); manual_transfer excluded —
+			-- those funds never passed through the platform and would inflate the balance.
 			SELECT
 				id::text                      AS id,
 				'payment'                     AS type,
@@ -131,7 +132,7 @@ func (r *Repository) ListActivity(ctx context.Context, tenantID int64, p Activit
 				''                            AS note,
 				created_at
 			FROM payment_transactions
-			WHERE tenant_id = $1
+			WHERE tenant_id = $1 AND provider != 'manual_transfer'
 
 			UNION ALL
 
@@ -165,6 +166,21 @@ func (r *Repository) ListActivity(ctx context.Context, tenantID int64, p Activit
 				''                        AS note,
 				created_at
 			FROM shipping_holds
+			WHERE tenant_id = $1
+
+			UNION ALL
+
+			-- Shipping price corrections (positive diff = debit, negative = credit)
+			SELECT
+				id::text                         AS id,
+				'shipment_price_adjustment'      AS type,
+				diff                             AS amount,
+				currency,
+				order_number,
+				''                               AS status,
+				''                               AS note,
+				created_at
+			FROM shipping_price_adjustments
 			WHERE tenant_id = $1
 
 		) activity
@@ -249,6 +265,29 @@ func (r *Repository) GetDetailByID(ctx context.Context, tenantID int64, id uuid.
 			return nil, fmt.Errorf("get hold detail: %w", err)
 		}
 
+	case ActivityShipmentPriceAdjustment:
+		var adj ShippingPriceAdjustment
+		row := db.QueryRow(ctx, `
+			SELECT diff, currency, order_number, old_price, new_price, created_at
+			FROM shipping_price_adjustments
+			WHERE id = $1 AND tenant_id = $2`,
+			id, tenantID)
+		if err := row.Scan(&adj.Diff, &adj.Currency, &adj.OrderNumber, &adj.OldPrice, &adj.NewPrice, &adj.CreatedAt); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, ErrNotFound
+			}
+			return nil, fmt.Errorf("get price adjustment detail: %w", err)
+		}
+		item.Amount = adj.Diff
+		item.Currency = adj.Currency
+		item.OrderNumber = adj.OrderNumber
+		item.CreatedAt = adj.CreatedAt
+		metadata = map[string]any{
+			"old_price": adj.OldPrice,
+			"new_price": adj.NewPrice,
+			"diff":      adj.Diff,
+		}
+
 	default:
 		return nil, fmt.Errorf("unknown activity type: %s", activityType)
 	}
@@ -295,7 +334,7 @@ func (r *Repository) GetPaymentBalance(ctx context.Context, tenantID int64) (*Me
 			COALESCE(SUM(merchant_amount) FILTER (WHERE status = 'settled'), 0),
 			COALESCE(SUM(merchant_amount) FILTER (WHERE status = 'paid'), 0)
 		FROM payment_transactions
-		WHERE tenant_id = $1`, tenantID).Scan(&settled, &pending)
+		WHERE tenant_id = $1 AND provider != 'manual_transfer'`, tenantID).Scan(&settled, &pending)
 	if err != nil {
 		return nil, fmt.Errorf("get payment balance for tenant %d: %w", tenantID, err)
 	}
@@ -364,6 +403,25 @@ func (r *Repository) DeductAvailableAndHold(ctx context.Context, tenantID int64,
 		tenantID, amount)
 	if err != nil {
 		return fmt.Errorf("deduct available balance: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrInsufficientBalance
+	}
+	return nil
+}
+
+// DeductAvailableOnly deducts amount from available balance without creating a hold.
+// Used for shipping price adjustments (actual cost > estimated cost).
+// Returns ErrInsufficientBalance when available < amount.
+func (r *Repository) DeductAvailableOnly(ctx context.Context, tenantID int64, amount int64) error {
+	tag, err := dbFromContext(ctx, r.pool).Exec(ctx, `
+		UPDATE merchant_shipping_balances
+		SET available  = available - $2,
+		    updated_at = NOW()
+		WHERE tenant_id = $1 AND available >= $2`,
+		tenantID, amount)
+	if err != nil {
+		return fmt.Errorf("deduct available balance (price adjustment): %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrInsufficientBalance
@@ -498,6 +556,26 @@ func scanHold(row pgx.Row) (*ShippingHold, error) {
 	h.ConfirmedAt = confirmedAt
 	h.ReleasedAt = releasedAt
 	return &h, nil
+}
+
+// ─── Price adjustments ────────────────────────────────────────────────────────
+
+// CreatePriceAdjustment inserts an audit row for a shipping price correction.
+func (r *Repository) CreatePriceAdjustment(ctx context.Context, adj *ShippingPriceAdjustment) error {
+	if adj.ID == uuid.Nil {
+		adj.ID = uuid.New()
+	}
+	adj.CreatedAt = time.Now().UTC()
+
+	_, err := dbFromContext(ctx, r.pool).Exec(ctx, `
+		INSERT INTO shipping_price_adjustments
+		    (id, tenant_id, order_number, old_price, new_price, diff, currency, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		adj.ID, adj.TenantID, adj.OrderNumber, adj.OldPrice, adj.NewPrice, adj.Diff, adj.Currency, adj.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("insert shipping_price_adjustment: %w", err)
+	}
+	return nil
 }
 
 // ─── Topups ───────────────────────────────────────────────────────────────────

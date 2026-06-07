@@ -176,6 +176,51 @@ func (s *Service) CreditFromPayment(ctx context.Context, tenantID int64, amount 
 	return s.repo.CreditAvailable(ctx, tenantID, amount, currency)
 }
 
+// AdjustShippingBalance applies a shipping price correction to the merchant's available balance
+// and records an audit row in shipping_price_adjustments.
+// diff = newPrice - originalPrice:
+//   - diff > 0: actual cost was higher → deduct the extra from available
+//   - diff < 0: actual cost was lower  → credit the saving back to available
+//   - diff = 0: no-op
+func (s *Service) AdjustShippingBalance(ctx context.Context, tenantID int64, oldPrice, newPrice int64, currency, orderNumber string) error {
+	diff := newPrice - oldPrice
+	if diff == 0 {
+		return nil
+	}
+	err := s.txRunner.RunInTx(ctx, func(txCtx context.Context) error {
+		if diff > 0 {
+			if err := s.repo.DeductAvailableOnly(txCtx, tenantID, diff); err != nil {
+				return err
+			}
+		} else {
+			if err := s.repo.CreditAvailable(txCtx, tenantID, -diff, currency); err != nil {
+				return err
+			}
+		}
+		adj := &ShippingPriceAdjustment{
+			TenantID:    tenantID,
+			OrderNumber: orderNumber,
+			OldPrice:    oldPrice,
+			NewPrice:    newPrice,
+			Diff:        diff,
+			Currency:    currency,
+		}
+		return s.repo.CreatePriceAdjustment(txCtx, adj)
+	})
+	if err != nil {
+		return err
+	}
+	s.logger.WithFields(logrus.Fields{
+		"component":    "account",
+		"tenant_id":    tenantID,
+		"order_number": orderNumber,
+		"old_price":    oldPrice,
+		"new_price":    newPrice,
+		"diff":         diff,
+	}).Info("shipping balance adjusted for price correction")
+	return nil
+}
+
 // ListTopups returns all topups for a tenant.
 func (s *Service) ListTopups(ctx context.Context, tenantID int64) ([]*ShippingTopup, error) {
 	return s.repo.ListTopups(ctx, tenantID)

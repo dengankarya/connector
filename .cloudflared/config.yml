@@ -1,0 +1,8 @@
+tunnel: 4dc3ebbd-37d9-4ed2-9df2-a371fa30e32e
+credentials-file: .cloudflared/credential.json
+
+ingress:
+  - hostname: local-api-connector.dengankarya.com
+    service: http://localhost:8002
+
+  - service: http_status:404

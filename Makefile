@@ -1,4 +1,4 @@
-.PHONY: run redis redis-stop redis-logs docker-build docs generate-client migrate-new
+.PHONY: run redis redis-stop redis-logs docker-build docs generate-client migrate-new cf-tunel
 
 run:
 	go run http/*.go
@@ -43,4 +43,7 @@ generate-client: docs
 		-o $(output) \
 		--additional-properties=supportsES6=true,withSeparateModelsAndApi=true,modelPackage=models,apiPackage=api
 
+# Cloudflare Tunnel
+cf-tunnel:
+	cloudflared tunnel --config .cloudflared/config.yml run connector
 

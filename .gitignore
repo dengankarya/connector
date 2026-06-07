@@ -2,3 +2,4 @@
 secret
 .claude/settings.local.json
 .DS_Store
+.cloudflared/credential.json

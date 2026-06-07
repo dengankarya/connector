@@ -31,6 +31,9 @@ const (
 	AccountPayout LedgerAccountType = "payout"
 	// AccountRefund — funds returned to customers.
 	AccountRefund LedgerAccountType = "refund"
+	// AccountMerchantDirect — funds received directly by the merchant (cash, bank transfer)
+	// that never passed through platform escrow. Used only for manual payments.
+	AccountMerchantDirect LedgerAccountType = "merchant_direct"
 )
 
 // LedgerEntry is an immutable, append-only record of a single financial movement.

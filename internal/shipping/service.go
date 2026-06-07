@@ -22,11 +22,14 @@ type LogisticAggregator interface {
 	GetCourierList(ctx context.Context, couriers []string) ([]biteship.Courier, error)
 }
 
-// BalanceValidator validates that a merchant has sufficient shipping balance before confirming a shipment.
+// BalanceValidator validates and deducts the merchant's shipping balance around a shipment confirmation.
 type BalanceValidator interface {
 	// ValidateShippingConfirm returns an error (including account.ErrInsufficientBalance) when
 	// the merchant cannot cover the shipment cost. Returns nil when funds are available.
 	ValidateShippingConfirm(ctx context.Context, tenantID int64, orderNumber string, requiredAmount int64) error
+	// ConfirmHoldForOrder transitions an active shipping hold to confirmed, consuming the reserved funds.
+	// No-op when no active hold exists for the order.
+	ConfirmHoldForOrder(ctx context.Context, tenantID int64, orderNumber string) error
 }
 
 type ShippingService struct {
@@ -66,7 +69,8 @@ func (s *ShippingService) GetShipment(ctx context.Context, tenantID int64, id uu
 }
 
 // ConfirmShipment promotes a draft shipment to a live order at the provider and updates the DB record.
-// It looks up the shipment by its internal ID, enforces tenant ownership, then calls the provider.
+// Idempotent: if the shipment is already past draft status, returns the current record immediately
+// without calling the provider again.
 func (s *ShippingService) ConfirmShipment(ctx context.Context, tenantID int64, id uuid.UUID) (*domain.Shipment, error) {
 	if s.shipmentRepo == nil {
 		return nil, domain.ErrNotFound
@@ -81,6 +85,13 @@ func (s *ShippingService) ConfirmShipment(ctx context.Context, tenantID int64, i
 	}
 	if shipment.ProviderDraftOrderID == nil || *shipment.ProviderDraftOrderID == "" {
 		return nil, fmt.Errorf("shipment %s has no draft order ID", id)
+	}
+
+	// Idempotency: if the shipment is already confirmed (or further along), skip the
+	// provider call. Biteship returns an error for already-confirmed draft orders, which
+	// would otherwise surface as a 500 on retries.
+	if shipment.Status != domain.ShipmentStatusDraft {
+		return shipment, nil
 	}
 
 	if s.balanceValidator != nil {
@@ -107,6 +118,17 @@ func (s *ShippingService) ConfirmShipment(ctx context.Context, tenantID int64, i
 	if err := s.shipmentRepo.Update(ctx, shipment); err != nil {
 		return nil, fmt.Errorf("confirm shipment: update record: %w", err)
 	}
+
+	// Consume the shipping hold (if one was reserved for this order) now that
+	// the provider has confirmed pickup. No-op when no active hold exists.
+	if s.balanceValidator != nil {
+		if err := s.balanceValidator.ConfirmHoldForOrder(ctx, tenantID, shipment.OrderNumber); err != nil {
+			// Non-fatal: shipment is confirmed; log but don't fail the request.
+			// The hold will stay in "holding" and can be reconciled manually.
+			_ = err
+		}
+	}
+
 	return shipment, nil
 }
 

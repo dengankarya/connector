@@ -291,9 +291,11 @@ func mapConfirmOrderResponse(resp CreateOrderResponse) *domain.Shipment {
 		shipment.TrackingURL = *resp.Courier.Link
 	}
 	if resp.ConfirmedAt != nil {
-		shipment.ConfirmedAt = resp.ConfirmedAt
+		t := resp.ConfirmedAt.Time
+		shipment.ConfirmedAt = &t
 	} else if resp.ReadyAt != nil {
-		shipment.ConfirmedAt = resp.ReadyAt
+		t := resp.ReadyAt.Time
+		shipment.ConfirmedAt = &t
 	}
 	return shipment
 }
@@ -307,7 +309,7 @@ func mapCreateOrderResponse(resp CreateOrderResponse) *domain.Shipment {
 		CourierServiceCode:   resp.Courier.Type,
 		ShippingCost:         resp.Price,
 		Status:               MapStatus(resp.Status),
-		CreatedAt:            resp.CreatedAt,
+		CreatedAt:            resp.CreatedAt.Time,
 	}
 
 	if resp.Courier.WaybillID != nil {
@@ -317,16 +319,20 @@ func mapCreateOrderResponse(resp CreateOrderResponse) *domain.Shipment {
 		shipment.TrackingURL = *resp.Courier.Link
 	}
 	if resp.ReadyAt != nil {
-		shipment.ConfirmedAt = resp.ReadyAt
+		t := resp.ReadyAt.Time
+		shipment.ConfirmedAt = &t
 	}
 	if resp.ConfirmedAt != nil {
-		shipment.ConfirmedAt = resp.ConfirmedAt
+		t := resp.ConfirmedAt.Time
+		shipment.ConfirmedAt = &t
 	}
-	if resp.Status == "picked" && resp.UpdatedAt.After(resp.CreatedAt) {
-		shipment.PickedUpAt = &resp.UpdatedAt
+	if resp.Status == "picked" && resp.UpdatedAt.Time.After(resp.CreatedAt.Time) {
+		t := resp.UpdatedAt.Time
+		shipment.PickedUpAt = &t
 	}
-	if resp.Status == "delivered" && resp.UpdatedAt.After(resp.CreatedAt) {
-		shipment.DeliveredAt = &resp.UpdatedAt
+	if resp.Status == "delivered" && resp.UpdatedAt.Time.After(resp.CreatedAt.Time) {
+		t := resp.UpdatedAt.Time
+		shipment.DeliveredAt = &t
 	}
 
 	return shipment

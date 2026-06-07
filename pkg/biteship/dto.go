@@ -1,6 +1,36 @@
 package biteship
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+// BiteshipTime is a time.Time wrapper that handles Biteship's non-standard timestamp formats.
+// Biteship sometimes omits seconds: "2006-01-02T15:04+07:00" instead of the RFC3339 standard
+// "2006-01-02T15:04:05Z07:00".
+type BiteshipTime struct {
+	time.Time
+}
+
+var biteshipTimeFormats = []string{
+	time.RFC3339,             // with seconds:    "2006-01-02T15:04:05Z07:00"
+	"2006-01-02T15:04Z07:00", // without seconds: "2006-01-02T15:04+07:00"
+}
+
+func (t *BiteshipTime) UnmarshalJSON(data []byte) error {
+	s := strings.Trim(string(data), `"`)
+	if s == "null" || s == "" {
+		return nil
+	}
+	for _, format := range biteshipTimeFormats {
+		if parsed, err := time.Parse(format, s); err == nil {
+			t.Time = parsed
+			return nil
+		}
+	}
+	return fmt.Errorf("cannot parse %q as Biteship timestamp", s)
+}
 
 // ─── Courier list ─────────────────────────────────────────────────────────────
 
@@ -131,12 +161,12 @@ type CreateOrderResponse struct {
 	InvoiceID   *string `json:"invoice_id"`
 	UserID      *string `json:"user_id"`
 
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	PlacedAt    *time.Time `json:"placed_at"`
-	ReadyAt     *time.Time `json:"ready_at"`
-	ConfirmedAt *time.Time `json:"confirmed_at"`
-	DeletedAt   *time.Time `json:"deleted_at"`
+	CreatedAt   BiteshipTime  `json:"created_at"`
+	UpdatedAt   BiteshipTime  `json:"updated_at"`
+	PlacedAt    *BiteshipTime `json:"placed_at"`
+	ReadyAt     *BiteshipTime `json:"ready_at"`
+	ConfirmedAt *BiteshipTime `json:"confirmed_at"`
+	DeletedAt   *BiteshipTime `json:"deleted_at"`
 }
 
 type OrderAddressResponse struct {
@@ -208,11 +238,11 @@ type CourierInsuranceResponse struct {
 }
 
 type DeliveryResponse struct {
-	Type         string     `json:"type"`
-	Datetime     *time.Time `json:"datetime"`
-	Note         *string    `json:"note"`
-	Distance     *float64   `json:"distance"`
-	DistanceUnit string     `json:"distance_unit"`
+	Type         string        `json:"type"`
+	Datetime     *BiteshipTime `json:"datetime"`
+	Note         *string       `json:"note"`
+	Distance     *float64      `json:"distance"`
+	DistanceUnit string        `json:"distance_unit"`
 }
 
 type OrderItemResponse struct {

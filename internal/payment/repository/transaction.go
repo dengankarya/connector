@@ -197,6 +197,8 @@ type PendingSettlementSums struct {
 
 // SumPendingSettlement aggregates all paid-but-not-settled transactions for a tenant.
 // "Pending" means status = 'paid' — money collected from customer but not yet marked settled by Xendit.
+// Manual payments (provider = 'manual_transfer') are excluded; those funds are already
+// with the merchant and are not held in platform escrow.
 func (r *TransactionRepository) SumPendingSettlement(ctx context.Context, tenantID int64) (*PendingSettlementSums, error) {
 	var s PendingSettlementSums
 	err := dbFromContext(ctx, r.pool).QueryRow(ctx, `
@@ -207,7 +209,7 @@ func (r *TransactionRepository) SumPendingSettlement(ctx context.Context, tenant
 			COALESCE(SUM(vat), 0),
 			COALESCE(SUM(xendit_withholding_tax + third_party_wht), 0)
 		FROM payment_transactions
-		WHERE tenant_id = $1 AND status = 'paid'`, tenantID).
+		WHERE tenant_id = $1 AND status = 'paid' AND provider != 'manual_transfer'`, tenantID).
 		Scan(&s.MerchantAmount, &s.PlatformFee, &s.XenditFee, &s.VAT, &s.Withholding)
 	if err != nil {
 		return nil, fmt.Errorf("sum pending settlement for tenant %d: %w", tenantID, err)
@@ -216,7 +218,9 @@ func (r *TransactionRepository) SumPendingSettlement(ctx context.Context, tenant
 }
 
 // SumSettled aggregates all settled transactions for a tenant.
-// "Settled" means status = 'settled' — Xendit has confirmed funds landed in the platform master account.
+// "Settled" means status = 'settled' and Xendit confirmed funds landed in the platform
+// master account. Manual payments (provider = 'manual_transfer') are excluded: those
+// funds were never in platform custody and are not withdrawable from the platform.
 func (r *TransactionRepository) SumSettled(ctx context.Context, tenantID int64) (*PendingSettlementSums, error) {
 	var s PendingSettlementSums
 	err := dbFromContext(ctx, r.pool).QueryRow(ctx, `
@@ -227,7 +231,7 @@ func (r *TransactionRepository) SumSettled(ctx context.Context, tenantID int64) 
 			COALESCE(SUM(vat), 0),
 			COALESCE(SUM(xendit_withholding_tax + third_party_wht), 0)
 		FROM payment_transactions
-		WHERE tenant_id = $1 AND status = 'settled'`, tenantID).
+		WHERE tenant_id = $1 AND status = 'settled' AND provider != 'manual_transfer'`, tenantID).
 		Scan(&s.MerchantAmount, &s.PlatformFee, &s.XenditFee, &s.VAT, &s.Withholding)
 	if err != nil {
 		return nil, fmt.Errorf("sum settled for tenant %d: %w", tenantID, err)

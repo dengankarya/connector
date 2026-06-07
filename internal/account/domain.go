@@ -37,11 +37,12 @@ type TransactionFilter struct {
 type ActivityType string
 
 const (
-	ActivityPayment           ActivityType = "payment"            // customer payment session
-	ActivityBalanceTopup      ActivityType = "balance_topup"      // manual top-up by platform operator
-	ActivityShipmentHold      ActivityType = "shipment_hold"      // funds reserved for a draft order
-	ActivityShipmentConfirmed ActivityType = "shipment_confirmed" // shipment confirmed, funds disbursed
-	ActivityShipmentReleased  ActivityType = "shipment_released"  // order cancelled, funds returned
+	ActivityPayment                  ActivityType = "payment"                   // customer payment session
+	ActivityBalanceTopup             ActivityType = "balance_topup"             // manual top-up by platform operator
+	ActivityShipmentHold             ActivityType = "shipment_hold"             // funds reserved for a draft order
+	ActivityShipmentConfirmed        ActivityType = "shipment_confirmed"        // shipment confirmed, funds disbursed
+	ActivityShipmentReleased         ActivityType = "shipment_released"         // order cancelled, funds returned
+	ActivityShipmentPriceAdjustment  ActivityType = "shipment_price_adjustment" // actual weight differed from estimate
 )
 
 // ActivityItem is a single entry in the unified merchant activity feed.
@@ -108,6 +109,20 @@ type ShippingHold struct {
 	CreatedAt   time.Time  `json:"created_at"`
 	ConfirmedAt *time.Time `json:"confirmed_at,omitempty"`
 	ReleasedAt  *time.Time `json:"released_at,omitempty"`
+}
+
+// ShippingPriceAdjustment records a single shipping cost correction for an order.
+// Created when the Biteship order.price webhook fires with a price different from the estimate.
+type ShippingPriceAdjustment struct {
+	ID          uuid.UUID `json:"id"`
+	TenantID    int64     `json:"tenant_id"`
+	OrderNumber string    `json:"order_number"`
+	OldPrice    int64     `json:"old_price"`
+	NewPrice    int64     `json:"new_price"`
+	// Diff = NewPrice - OldPrice. Positive means balance was debited; negative means credited.
+	Diff      int64     `json:"diff"`
+	Currency  string    `json:"currency"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // ShippingTopup records a single manual top-up by the platform operator.
