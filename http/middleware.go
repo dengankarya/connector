@@ -1,9 +1,7 @@
 package main
 
 import (
-	"encoding/base64"
 	"net/http"
-	"strings"
 
 	"github.com/dengankarya/connector/common"
 	"github.com/dengankarya/connector/config"
@@ -22,38 +20,6 @@ var swaggerHandler = adaptor.HTTPHandler(httpSwagger.Handler(
 
 func serveSwaggerUI(c fiber.Ctx) error {
 	return swaggerHandler(c)
-}
-
-// basicAuth returns a handler that enforces HTTP Basic Auth when both username
-// and password are configured. If either is empty, the route is left open.
-func basicAuth(username, password string) fiber.Handler {
-	return func(c fiber.Ctx) error {
-		if username == "" || password == "" {
-			return c.Next()
-		}
-		user, pass, ok := parseBasicAuth(c.Get("Authorization"))
-		if !ok || user != username || pass != password {
-			c.Set("WWW-Authenticate", `Basic realm="Swagger UI"`)
-			return c.Status(http.StatusUnauthorized).SendString("Unauthorized")
-		}
-		return c.Next()
-	}
-}
-
-func parseBasicAuth(header string) (username, password string, ok bool) {
-	const prefix = "Basic "
-	if !strings.HasPrefix(header, prefix) {
-		return "", "", false
-	}
-	decoded, err := base64.StdEncoding.DecodeString(header[len(prefix):])
-	if err != nil {
-		return "", "", false
-	}
-	user, pass, found := strings.Cut(string(decoded), ":")
-	if !found {
-		return "", "", false
-	}
-	return user, pass, true
 }
 
 func authenticatedRequest(cfg *config.Configuration) fiber.Handler {

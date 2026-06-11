@@ -195,7 +195,7 @@ func main() {
 
 	// ── HTTP server ─────────────────────────────────────────────────────────
 	app := fiber.New()
-	app.Get("/swagger/*", basicAuth(cfg.SwaggerUsername, cfg.SwaggerPassword), serveSwaggerUI)
+	app.Get("/swagger/*", serveSwaggerUI)
 	app.Use(cors.New(cors.ConfigDefault))
 	app.Use(requestLogger())
 	apiRootGroup := app.Group("/api/v1")
