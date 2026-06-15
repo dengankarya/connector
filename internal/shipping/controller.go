@@ -91,7 +91,7 @@ func (ctrl *controller) handleListShipments(c fiber.Ctx) error {
 
 	var statuses []shippingDomain.ShipmentStatus
 	if s := c.Query("status"); s != "" {
-		for _, part := range strings.Split(s, ",") {
+		for part := range strings.SplitSeq(s, ",") {
 			if part = strings.TrimSpace(part); part != "" {
 				statuses = append(statuses, shippingDomain.ShipmentStatus(part))
 			}

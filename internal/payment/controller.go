@@ -578,7 +578,7 @@ func (ctrl *paymentController) listTransactions(c fiber.Ctx) error {
 	// Accept comma-separated statuses: ?status=paid,settled
 	var statuses []domain.PaymentStatus
 	if s := c.Query("status"); s != "" {
-		for _, part := range strings.Split(s, ",") {
+		for part := range strings.SplitSeq(s, ",") {
 			part = strings.TrimSpace(part)
 			if part == "" {
 				continue

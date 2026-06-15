@@ -33,5 +33,5 @@ type WebhookEvent struct {
 	LastError          string                  `json:"last_error,omitempty"`
 	TransactionID      *uuid.UUID              `json:"transaction_id,omitempty"` // set after successful processing
 	ProcessedAt        *time.Time              `json:"processed_at,omitempty"`
-	CreatedAt          time.Time               `json:"created_at,omitempty"`
+	CreatedAt          time.Time               `json:"created_at"`
 }

@@ -152,7 +152,7 @@ func mapRatesLocation(a BiteshipDetailedAddress) provider.RatesLocation {
 }
 
 // toFloat64 converts interface{} number values (float64 or json.Number) to float64.
-func toFloat64(v interface{}) (float64, bool) {
+func toFloat64(v any) (float64, bool) {
 	switch n := v.(type) {
 	case float64:
 		return n, true

@@ -3,6 +3,7 @@ package xendit
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/dengankarya/connector/internal/payment/provider"
@@ -32,7 +33,7 @@ type customerDTO struct {
 	ReferenceID      string           `json:"reference_id"`
 	Type             string           `json:"type,omitempty"` // "INDIVIDUAL"
 	Email            string           `json:"email,omitempty"`
-	IndividualDetail IndividualDetail `json:"individual_detail,omitempty"`
+	IndividualDetail IndividualDetail `json:"individual_detail"`
 }
 
 type IndividualDetail struct {
@@ -118,9 +119,7 @@ func toCreateSessionDTO(req provider.CreateInvoiceRequest) createSessionDTO {
 	// Preserve caller-provided metadata but always include Xendit-visible fields
 	// so the Xendit dashboard can be filtered by these values.
 	meta := make(map[string]string, len(req.Metadata))
-	for k, v := range req.Metadata {
-		meta[k] = v
-	}
+	maps.Copy(meta, req.Metadata)
 
 	dto := createSessionDTO{
 		ReferenceID:            req.ExternalID,

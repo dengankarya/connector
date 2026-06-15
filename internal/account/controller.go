@@ -91,7 +91,7 @@ func (ctrl *controller) listTransactions(c fiber.Ctx) error {
 	}
 
 	if typeStr := c.Query("type"); typeStr != "" {
-		for _, t := range strings.Split(typeStr, ",") {
+		for t := range strings.SplitSeq(typeStr, ",") {
 			filter.Types = append(filter.Types, ActivityType(strings.TrimSpace(t)))
 		}
 	}

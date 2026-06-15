@@ -338,52 +338,52 @@ type GetShipmentRatesResponse struct {
 	Code        int                       `json:"code"`
 	Origin      BiteshipDetailedAddress   `json:"origin"`
 	Destination BiteshipDetailedAddress   `json:"destination"`
-	Stops       []interface{}             `json:"stops"`
+	Stops       []any                     `json:"stops"`
 	Pricing     []BiteshipPricingResponse `json:"pricing"`
 }
 
 type BiteshipDetailedAddress struct {
-	LocationID                       interface{} `json:"location_id"`
-	Latitude                         interface{} `json:"latitude"`
-	Longitude                        interface{} `json:"longitude"`
-	PostalCode                       int         `json:"postal_code"`
-	CountryName                      string      `json:"country_name"`
-	CountryCode                      string      `json:"country_code"`
-	AdministrativeDivisionLevel1Name string      `json:"administrative_division_level_1_name"`
-	AdministrativeDivisionLevel1Type string      `json:"administrative_division_level_1_type"`
-	AdministrativeDivisionLevel2Name string      `json:"administrative_division_level_2_name"`
-	AdministrativeDivisionLevel2Type string      `json:"administrative_division_level_2_type"`
-	AdministrativeDivisionLevel3Name string      `json:"administrative_division_level_3_name"`
-	AdministrativeDivisionLevel3Type string      `json:"administrative_division_level_3_type"`
-	AdministrativeDivisionLevel4Name string      `json:"administrative_division_level_4_name"`
-	AdministrativeDivisionLevel4Type string      `json:"administrative_division_level_4_type"`
-	Address                          interface{} `json:"address"`
+	LocationID                       any    `json:"location_id"`
+	Latitude                         any    `json:"latitude"`
+	Longitude                        any    `json:"longitude"`
+	PostalCode                       int    `json:"postal_code"`
+	CountryName                      string `json:"country_name"`
+	CountryCode                      string `json:"country_code"`
+	AdministrativeDivisionLevel1Name string `json:"administrative_division_level_1_name"`
+	AdministrativeDivisionLevel1Type string `json:"administrative_division_level_1_type"`
+	AdministrativeDivisionLevel2Name string `json:"administrative_division_level_2_name"`
+	AdministrativeDivisionLevel2Type string `json:"administrative_division_level_2_type"`
+	AdministrativeDivisionLevel3Name string `json:"administrative_division_level_3_name"`
+	AdministrativeDivisionLevel3Type string `json:"administrative_division_level_3_type"`
+	AdministrativeDivisionLevel4Name string `json:"administrative_division_level_4_name"`
+	AdministrativeDivisionLevel4Type string `json:"administrative_division_level_4_type"`
+	Address                          any    `json:"address"`
 }
 
 type BiteshipPricingResponse struct {
-	AvailableCollectionMethod    []string      `json:"available_collection_method"`
-	AvailableForCashOnDelivery   bool          `json:"available_for_cash_on_delivery"`
-	AvailableForProofOfDelivery  bool          `json:"available_for_proof_of_delivery"`
-	AvailableForInstantWaybillID bool          `json:"available_for_instant_waybill_id"`
-	AvailableForInsurance        bool          `json:"available_for_insurance"`
-	Company                      string        `json:"company"`
-	CourierName                  string        `json:"courier_name"`
-	CourierCode                  string        `json:"courier_code"`
-	CourierServiceName           string        `json:"courier_service_name"`
-	CourierServiceCode           string        `json:"courier_service_code"`
-	Currency                     string        `json:"currency"`
-	Description                  string        `json:"description"`
-	Duration                     string        `json:"duration"`
-	ShipmentDurationRange        string        `json:"shipment_duration_range"`
-	ShipmentDurationUnit         string        `json:"shipment_duration_unit"`
-	ServiceType                  string        `json:"service_type"`
-	ShippingType                 string        `json:"shipping_type"`
-	Price                        int           `json:"price"`
-	ShippingFee                  int           `json:"shipping_fee"`
-	ShippingFeeDiscount          int           `json:"shipping_fee_discount"`
-	ShippingFeeSurcharge         int           `json:"shipping_fee_surcharge"`
-	InsuranceFee                 int           `json:"insurance_fee"`
-	CashOnDeliveryFee            int           `json:"cash_on_delivery_fee"`
-	TaxLines                     []interface{} `json:"tax_lines"`
-	Type                         string        `json:"type"`
+	AvailableCollectionMethod    []string `json:"available_collection_method"`
+	AvailableForCashOnDelivery   bool     `json:"available_for_cash_on_delivery"`
+	AvailableForProofOfDelivery  bool     `json:"available_for_proof_of_delivery"`
+	AvailableForInstantWaybillID bool     `json:"available_for_instant_waybill_id"`
+	AvailableForInsurance        bool     `json:"available_for_insurance"`
+	Company                      string   `json:"company"`
+	CourierName                  string   `json:"courier_name"`
+	CourierCode                  string   `json:"courier_code"`
+	CourierServiceName           string   `json:"courier_service_name"`
+	CourierServiceCode           string   `json:"courier_service_code"`
+	Currency                     string   `json:"currency"`
+	Description                  string   `json:"description"`
+	Duration                     string   `json:"duration"`
+	ShipmentDurationRange        string   `json:"shipment_duration_range"`
+	ShipmentDurationUnit         string   `json:"shipment_duration_unit"`
+	ServiceType                  string   `json:"service_type"`
+	ShippingType                 string   `json:"shipping_type"`
+	Price                        int      `json:"price"`
+	ShippingFee                  int      `json:"shipping_fee"`
+	ShippingFeeDiscount          int      `json:"shipping_fee_discount"`
+	ShippingFeeSurcharge         int      `json:"shipping_fee_surcharge"`
+	InsuranceFee                 int      `json:"insurance_fee"`
+	CashOnDeliveryFee            int      `json:"cash_on_delivery_fee"`
+	TaxLines                     []any    `json:"tax_lines"`
+	Type                         string   `json:"type"`
 }

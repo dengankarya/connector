@@ -3,6 +3,7 @@
 package domain
 
 import (
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,12 +46,7 @@ func (s PaymentStatus) IsValid() bool {
 
 // CanTransitionTo returns true when transitioning from s to next is a valid move.
 func (s PaymentStatus) CanTransitionTo(next PaymentStatus) bool {
-	for _, allowed := range validTransitions[s] {
-		if allowed == next {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(validTransitions[s], next)
 }
 
 // PaymentTransaction is the central entity tracking a single payment's lifecycle.
@@ -84,8 +80,8 @@ type PaymentTransaction struct {
 	PaidAt                  *time.Time `json:"paid_at,omitempty"`
 	SettledAt               *time.Time `json:"settled_at,omitempty"`
 	EstimatedSettlementTime *time.Time `json:"estimated_settlement_time,omitempty"`
-	CreatedAt               time.Time  `json:"created_at,omitempty"`
-	UpdatedAt               time.Time  `json:"updated_at,omitempty"`
+	CreatedAt               time.Time  `json:"created_at"`
+	UpdatedAt               time.Time  `json:"updated_at"`
 	Version                 int        `json:"version,omitempty"` // optimistic lock version; increment on every write
 }
 

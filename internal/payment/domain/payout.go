@@ -35,8 +35,8 @@ type Payout struct {
 	MaxRetries       int          `json:"max_retries,omitempty"`
 	ScheduledAt      *time.Time   `json:"scheduled_at,omitempty"`
 	ProcessedAt      *time.Time   `json:"processed_at,omitempty"`
-	CreatedAt        time.Time    `json:"created_at,omitempty"`
-	UpdatedAt        time.Time    `json:"updated_at,omitempty"`
+	CreatedAt        time.Time    `json:"created_at"`
+	UpdatedAt        time.Time    `json:"updated_at"`
 }
 
 // PayoutItem links a specific payment transaction to a payout batch.
@@ -46,5 +46,5 @@ type PayoutItem struct {
 	PayoutID      uuid.UUID `json:"payout_id,omitempty"`
 	TransactionID uuid.UUID `json:"transaction_id,omitempty"`
 	Amount        int64     `json:"amount,omitempty"`
-	CreatedAt     time.Time `json:"created_at,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }

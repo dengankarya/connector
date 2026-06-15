@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -102,9 +103,7 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req CreatePaymentReq
 	// Merge caller metadata with platform-level fields visible on the Xendit dashboard.
 	// tenant_id lets you filter master-account transactions by merchant on Xendit.
 	meta := make(map[string]string, len(req.Metadata)+2)
-	for k, v := range req.Metadata {
-		meta[k] = v
-	}
+	maps.Copy(meta, req.Metadata)
 	meta["tenant_id"] = fmt.Sprintf("%d", req.TenantID)
 	if req.OrderNumber != "" {
 		meta["order_number"] = req.OrderNumber

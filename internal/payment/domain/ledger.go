@@ -50,7 +50,7 @@ type LedgerEntry struct {
 	ReferenceID    string            `json:"reference_id,omitempty"` // globally unique idempotency key for this specific entry
 	Description    string            `json:"description,omitempty"`
 	Metadata       map[string]any    `json:"metadata,omitempty"`
-	CreatedAt      time.Time         `json:"created_at,omitempty"`
+	CreatedAt      time.Time         `json:"created_at"`
 }
 
 // LedgerJournal groups a balanced set of debit/credit entries for one financial event.

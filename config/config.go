@@ -41,7 +41,7 @@ func (c Configuration) IsThisRequestAuthenticated(apiKey string) bool {
 		return false
 	}
 	// Admin keys are implicitly valid regular keys — no need to list them in both vars.
-	for _, key := range strings.Split(c.AllowedAPIKeys+","+c.AdminAPIKeys, ",") {
+	for key := range strings.SplitSeq(c.AllowedAPIKeys+","+c.AdminAPIKeys, ",") {
 		if k := strings.TrimSpace(key); k != "" && k == apiKey {
 			return true
 		}
@@ -55,7 +55,7 @@ func (c Configuration) IsAdminRequest(apiKey string) bool {
 	if apiKey == "" || c.AdminAPIKeys == "" {
 		return false
 	}
-	for _, key := range strings.Split(c.AdminAPIKeys, ",") {
+	for key := range strings.SplitSeq(c.AdminAPIKeys, ",") {
 		if strings.TrimSpace(key) == apiKey {
 			return true
 		}
