@@ -363,12 +363,31 @@ func (s *Service) ValidateShippingConfirm(ctx context.Context, tenantID int64, o
 }
 
 // ConfirmHoldForOrder confirms the active shipping hold for the given order number.
-// It is a no-op when no active hold exists or the hold is already actioned.
-func (s *Service) ConfirmHoldForOrder(ctx context.Context, tenantID int64, orderNumber string) error {
+// When no hold exists, deducts amount directly from available balance and records a
+// confirmed hold row so the deduction appears in the activity feed.
+func (s *Service) ConfirmHoldForOrder(ctx context.Context, tenantID int64, orderNumber string, amount int64) error {
 	hold, err := s.repo.GetHoldByOrderNumber(ctx, tenantID, orderNumber)
 	if err != nil {
 		if errors.Is(err, ErrHoldNotFound) {
-			return nil // no active hold — nothing to do
+			if amount <= 0 {
+				return nil
+			}
+			// No hold was pre-created — deduct from available and record a confirmed hold
+			// in a single transaction so the activity feed reflects the deduction.
+			return s.txRunner.RunInTx(ctx, func(txCtx context.Context) error {
+				if err := s.repo.DeductAvailableOnly(txCtx, tenantID, amount); err != nil {
+					return err
+				}
+				now := time.Now().UTC()
+				return s.repo.InsertHold(txCtx, &ShippingHold{
+					TenantID:    tenantID,
+					OrderNumber: orderNumber,
+					Amount:      amount,
+					Currency:    "IDR",
+					Status:      HoldStatusConfirmed,
+					ConfirmedAt: &now,
+				})
+			})
 		}
 		return fmt.Errorf("confirm hold for order %q: lookup: %w", orderNumber, err)
 	}

@@ -2910,13 +2910,15 @@ const docTemplate = `{
                 "balance_topup",
                 "shipment_hold",
                 "shipment_confirmed",
-                "shipment_released"
+                "shipment_released",
+                "shipment_price_adjustment"
             ],
             "x-enum-comments": {
                 "ActivityBalanceTopup": "manual top-up by platform operator",
                 "ActivityPayment": "customer payment session",
                 "ActivityShipmentConfirmed": "shipment confirmed, funds disbursed",
                 "ActivityShipmentHold": "funds reserved for a draft order",
+                "ActivityShipmentPriceAdjustment": "actual weight differed from estimate",
                 "ActivityShipmentReleased": "order cancelled, funds returned"
             },
             "x-enum-descriptions": [
@@ -2924,14 +2926,16 @@ const docTemplate = `{
                 "manual top-up by platform operator",
                 "funds reserved for a draft order",
                 "shipment confirmed, funds disbursed",
-                "order cancelled, funds returned"
+                "order cancelled, funds returned",
+                "actual weight differed from estimate"
             ],
             "x-enum-varnames": [
                 "ActivityPayment",
                 "ActivityBalanceTopup",
                 "ActivityShipmentHold",
                 "ActivityShipmentConfirmed",
-                "ActivityShipmentReleased"
+                "ActivityShipmentReleased",
+                "ActivityShipmentPriceAdjustment"
             ]
         },
         "internal_account.CreateHoldBody": {

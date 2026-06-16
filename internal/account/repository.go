@@ -472,6 +472,29 @@ func (r *Repository) CreateHold(ctx context.Context, h *ShippingHold) error {
 	return nil
 }
 
+// InsertHold inserts a fully-populated ShippingHold, preserving the provided status,
+// confirmed_at, and released_at. Use this when the hold is created already in a terminal
+// state (e.g., direct deduction without a prior hold reservation).
+func (r *Repository) InsertHold(ctx context.Context, h *ShippingHold) error {
+	if h.ID == uuid.Nil {
+		h.ID = uuid.New()
+	}
+	if h.CreatedAt.IsZero() {
+		h.CreatedAt = time.Now().UTC()
+	}
+	_, err := dbFromContext(ctx, r.pool).Exec(ctx, `
+		INSERT INTO shipping_holds (id, tenant_id, order_number, amount, currency, status, created_at, confirmed_at, released_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		h.ID, h.TenantID, h.OrderNumber, h.Amount, h.Currency, string(h.Status), h.CreatedAt, h.ConfirmedAt, h.ReleasedAt)
+	if err != nil {
+		if isDuplicateKeyError(err) {
+			return ErrDuplicateHold
+		}
+		return fmt.Errorf("insert shipping_hold: %w", err)
+	}
+	return nil
+}
+
 func (r *Repository) GetHoldByID(ctx context.Context, id uuid.UUID) (*ShippingHold, error) {
 	row := dbFromContext(ctx, r.pool).QueryRow(ctx, `
 		SELECT id::text, tenant_id, order_number, amount, currency, status,

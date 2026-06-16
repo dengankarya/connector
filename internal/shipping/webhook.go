@@ -41,7 +41,8 @@ type ShipmentWebhookPayload struct {
 // HoldManager confirms or releases a shipping hold in response to shipment status changes.
 type HoldManager interface {
 	// ConfirmHoldForOrder confirms the active hold for the order, consuming the reserved funds.
-	ConfirmHoldForOrder(ctx context.Context, tenantID int64, orderNumber string) error
+	// When no hold exists, deducts amount directly from available balance.
+	ConfirmHoldForOrder(ctx context.Context, tenantID int64, orderNumber string, amount int64) error
 	// ReleaseHoldForOrder releases the active hold for the order, returning funds to available.
 	ReleaseHoldForOrder(ctx context.Context, tenantID int64, orderNumber string) error
 	// AdjustShippingBalance applies a price correction to the merchant's available balance
@@ -232,7 +233,7 @@ func (ctrl *webhookController) handleOrderStatus(ctx context.Context, body []byt
 	if ctrl.holds != nil && s.OrderNumber != "" {
 		switch evt.Status {
 		case "confirmed", "scheduled":
-			if err := ctrl.holds.ConfirmHoldForOrder(ctx, s.TenantID, s.OrderNumber); err != nil {
+			if err := ctrl.holds.ConfirmHoldForOrder(ctx, s.TenantID, s.OrderNumber, s.ShippingCost); err != nil {
 				ctrl.logger.WithError(err).WithFields(log.Fields{
 					"order_number": s.OrderNumber,
 					"tenant_id":    s.TenantID,

@@ -37,12 +37,12 @@ type TransactionFilter struct {
 type ActivityType string
 
 const (
-	ActivityPayment                  ActivityType = "payment"                   // customer payment session
-	ActivityBalanceTopup             ActivityType = "balance_topup"             // manual top-up by platform operator
-	ActivityShipmentHold             ActivityType = "shipment_hold"             // funds reserved for a draft order
-	ActivityShipmentConfirmed        ActivityType = "shipment_confirmed"        // shipment confirmed, funds disbursed
-	ActivityShipmentReleased         ActivityType = "shipment_released"         // order cancelled, funds returned
-	ActivityShipmentPriceAdjustment  ActivityType = "shipment_price_adjustment" // actual weight differed from estimate
+	ActivityPayment                 ActivityType = "payment"                   // customer payment session
+	ActivityBalanceTopup            ActivityType = "balance_topup"             // manual top-up by platform operator
+	ActivityShipmentHold            ActivityType = "shipment_hold"             // funds reserved for a draft order
+	ActivityShipmentConfirmed       ActivityType = "shipment_confirmed"        // shipment confirmed, funds disbursed
+	ActivityShipmentReleased        ActivityType = "shipment_released"         // order cancelled, funds returned
+	ActivityShipmentPriceAdjustment ActivityType = "shipment_price_adjustment" // actual weight differed from estimate
 )
 
 // ActivityItem is a single entry in the unified merchant activity feed.

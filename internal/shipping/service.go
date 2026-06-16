@@ -28,8 +28,8 @@ type BalanceValidator interface {
 	// the merchant cannot cover the shipment cost. Returns nil when funds are available.
 	ValidateShippingConfirm(ctx context.Context, tenantID int64, orderNumber string, requiredAmount int64) error
 	// ConfirmHoldForOrder transitions an active shipping hold to confirmed, consuming the reserved funds.
-	// No-op when no active hold exists for the order.
-	ConfirmHoldForOrder(ctx context.Context, tenantID int64, orderNumber string) error
+	// When no hold exists, deducts amount directly from available balance.
+	ConfirmHoldForOrder(ctx context.Context, tenantID int64, orderNumber string, amount int64) error
 }
 
 type ShippingService struct {
@@ -119,10 +119,10 @@ func (s *ShippingService) ConfirmShipment(ctx context.Context, tenantID int64, i
 		return nil, fmt.Errorf("confirm shipment: update record: %w", err)
 	}
 
-	// Consume the shipping hold (if one was reserved for this order) now that
-	// the provider has confirmed pickup. No-op when no active hold exists.
+	// Consume the shipping balance now that the provider has confirmed pickup.
+	// Confirms the hold if one was pre-created, or deducts directly from available balance.
 	if s.balanceValidator != nil {
-		if err := s.balanceValidator.ConfirmHoldForOrder(ctx, tenantID, shipment.OrderNumber); err != nil {
+		if err := s.balanceValidator.ConfirmHoldForOrder(ctx, tenantID, shipment.OrderNumber, shipment.ShippingCost); err != nil {
 			// Non-fatal: shipment is confirmed; log but don't fail the request.
 			// The hold will stay in "holding" and can be reconciled manually.
 			_ = err
