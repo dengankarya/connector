@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/subtle"
 	"strings"
 
 	"github.com/caarlos0/env/v11"
@@ -42,10 +43,11 @@ func (c Configuration) IsThisRequestAuthenticated(apiKey string) bool {
 	}
 	// Admin keys are implicitly valid regular keys — no need to list them in both vars.
 	for key := range strings.SplitSeq(c.AllowedAPIKeys+","+c.AdminAPIKeys, ",") {
-		if k := strings.TrimSpace(key); k != "" && k == apiKey {
+		if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(key)), []byte(apiKey)) == 1 {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -56,7 +58,7 @@ func (c Configuration) IsAdminRequest(apiKey string) bool {
 		return false
 	}
 	for key := range strings.SplitSeq(c.AdminAPIKeys, ",") {
-		if strings.TrimSpace(key) == apiKey {
+		if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(key)), []byte(apiKey)) == 1 {
 			return true
 		}
 	}
