@@ -9,17 +9,10 @@ import (
 
 	"github.com/dengankarya/connector/internal/payment/domain"
 	"github.com/dengankarya/connector/internal/payment/ledger"
-	"github.com/dengankarya/connector/internal/payment/provider"
 	"github.com/dengankarya/connector/internal/payment/repository"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
-
-// WebhookForwarder forwards the raw Xendit payload to an upstream app after processing.
-// pkg/tokokarya.Client satisfies this interface.
-type WebhookForwarder interface {
-	ForwardWebhook(ctx context.Context, payload []byte) error
-}
 
 // ShippingBalanceCreditor credits a merchant's shipping balance from the shipping_fee
 // portion of a paid payment. Must be called inside an existing DB transaction.
@@ -35,21 +28,17 @@ type Processor struct {
 	txnRepo          *repository.TransactionRepository
 	ledger           *ledger.Service
 	txRunner         *repository.TxRunner
-	prov             provider.PaymentProvider
-	forwarder        WebhookForwarder        // optional; if nil forwarding is skipped
 	shippingCreditor ShippingBalanceCreditor // optional; if nil shipping_fee credit is skipped
 	logger           *logrus.Logger
 }
 
 // NewProcessor creates a Processor with all required dependencies.
-// forwarder and shippingCreditor may be nil — those steps are silently skipped when not configured.
+// shippingCreditor may be nil — shipping balance credit is skipped when not configured.
 func NewProcessor(
 	eventRepo *repository.WebhookEventRepository,
 	txnRepo *repository.TransactionRepository,
 	ledgerSvc *ledger.Service,
 	txRunner *repository.TxRunner,
-	prov provider.PaymentProvider,
-	forwarder WebhookForwarder,
 	shippingCreditor ShippingBalanceCreditor,
 	logger *logrus.Logger,
 ) *Processor {
@@ -58,69 +47,14 @@ func NewProcessor(
 		txnRepo:          txnRepo,
 		ledger:           ledgerSvc,
 		txRunner:         txRunner,
-		prov:             prov,
-		forwarder:        forwarder,
 		shippingCreditor: shippingCreditor,
 		logger:           logger,
 	}
 }
 
-// Ingest stores a raw webhook payload and returns the assigned event UUID.
-// It is safe to call multiple times with the same provider event ID (idempotent).
-// The heavy processing happens asynchronously — callers should return HTTP 200 immediately.
-func (p *Processor) Ingest(ctx context.Context, payload []byte, headers map[string]string, prov provider.PaymentProvider) (uuid.UUID, bool, error) {
-	log := p.logger.WithField("component", "webhook_ingest")
-
-	// Parse to extract the event type and invoice ID for the provider_event_id.
-	parsed, err := prov.ParseWebhookEvent(ctx, payload)
-	if err != nil {
-		return uuid.Nil, false, fmt.Errorf("ingest: parse payload: %w", err)
-	}
-
-	// Derive a stable, unique event identifier.
-	providerEventID := deriveEventID(headers, parsed.EventType, parsed.ProviderInvoiceID)
-
-	event := &domain.WebhookEvent{
-		Provider:           prov.ProviderName(),
-		ProviderEventID:    providerEventID,
-		EventType:          parsed.EventType,
-		RawPayload:         payload,
-		Headers:            headers,
-		Signature:          headers["x-callback-token"],
-		SignatureValid:     true, // already validated by controller before calling Ingest
-		ProcessingStatus:   domain.WebhookStatusReceived,
-		ProcessingAttempts: 0,
-	}
-
-	err = p.eventRepo.Create(ctx, event)
-	if errors.Is(err, domain.ErrDuplicateWebhookEvent) {
-		log.WithFields(logrus.Fields{
-			"provider":          prov.ProviderName(),
-			"provider_event_id": providerEventID,
-			"event_type":        parsed.EventType,
-		}).Warn("duplicate webhook event received — skipping enqueue")
-		return uuid.Nil, true, nil // already seen; caller should 200 immediately
-	}
-	if err != nil {
-		return uuid.Nil, false, fmt.Errorf("ingest: store event: %w", err)
-	}
-
-	log.WithFields(logrus.Fields{
-		"webhook_event_id":  event.ID,
-		"provider_event_id": providerEventID,
-		"event_type":        parsed.EventType,
-	}).Info("webhook event stored")
-
-	return event.ID, false, nil
-}
-
 // Process runs the full processing pipeline for a stored webhook event.
 // All DB mutations (status updates, transaction update, ledger inserts) are wrapped
 // in a single ACID transaction so there is no partial state on failure.
-//
-// After a successful commit the raw Xendit payload is forwarded to Tokokarya
-// asynchronously (fire-and-forget). Forward failures are logged but never
-// propagate back — they do not cause the task to be retried.
 //
 // Safe to call multiple times — idempotency is enforced at every step.
 func (p *Processor) Process(ctx context.Context, eventID uuid.UUID) error {
@@ -129,10 +63,6 @@ func (p *Processor) Process(ctx context.Context, eventID uuid.UUID) error {
 		"component":        "webhook_processor",
 		"webhook_event_id": eventID,
 	})
-
-	// rawPayload and didProcess are set inside the transaction and read after commit.
-	var rawPayload []byte
-	var didProcess bool
 
 	err := p.txRunner.RunInTx(ctx, func(txCtx context.Context) error {
 		// ── Step 1: Lock the webhook event row ──────────────────────────────
@@ -190,9 +120,6 @@ func (p *Processor) Process(ctx context.Context, eventID uuid.UUID) error {
 			return fmt.Errorf("mark processed: %w", err)
 		}
 
-		rawPayload = event.RawPayload
-		didProcess = true
-
 		log.WithField("duration_ms", time.Since(start).Milliseconds()).
 			Info("webhook event processed successfully")
 		return nil
@@ -201,51 +128,18 @@ func (p *Processor) Process(ctx context.Context, eventID uuid.UUID) error {
 		return err
 	}
 
-	// ── Step 7: Forward raw payload to Tokokarya (post-commit, async) ────────
-	// Done outside the DB transaction so a Tokokarya outage never rolls back the
-	// payment state. Runs in a goroutine with its own timeout — task context may
-	// already be cancelled by the time we get here.
-	if didProcess && p.forwarder != nil {
-		go func() {
-			fwdCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			if err := p.forwarder.ForwardWebhook(fwdCtx, rawPayload); err != nil {
-				p.logger.WithFields(logrus.Fields{
-					"component":        "webhook_processor",
-					"webhook_event_id": eventID,
-				}).WithError(err).Warn("forward webhook to tokokarya failed — payment state is committed")
-			}
-		}()
-	}
-
 	return nil
 }
 
-// handle routes the event to the appropriate handler based on EventType.
-//
-// Xendit Sessions API events (primary — fired by POST /sessions):
-//   - payment_session.completed → payment captured via hosted checkout
-//   - payment_session.expired   → session timed out before payment
-//   - payment_session.failed    → session payment failed
-//
-// Xendit Payment Request API events (kept for compatibility):
-//   - payment.capture           → payment captured
-//   - payment.authorization     → authorised pending capture; no-op for AUTOMATIC
-//   - payment.failure           → failed/expired (distinguished by failure_code)
 func (p *Processor) handle(ctx context.Context, event *domain.WebhookEvent, txn *domain.PaymentTransaction, log *logrus.Entry) error {
 	switch event.EventType {
-	// ── Sessions API ────────────────────────────────────────────────────────
-	case "payment_session.completed":
+	case "payment_session.completed", "payment.capture":
 		return p.handlePaid(ctx, event, txn, log)
 	case "payment_session.expired":
 		return p.handleExpired(ctx, event, txn, log)
 	case "payment_session.failed":
 		details := parsePaymentDetails(event.RawPayload)
 		return p.handleFailed(ctx, event, txn, log, details.FailureCode)
-
-	// ── Payment Request API (compatibility) ─────────────────────────────────
-	case "payment.capture":
-		return p.handlePaid(ctx, event, txn, log)
 	case "payment.authorization":
 		log.Info("payment authorised — no action required for automatic capture")
 		return nil
@@ -376,10 +270,6 @@ func (p *Processor) handleFailed(ctx context.Context, _ *domain.WebhookEvent, tx
 	return nil
 }
 
-// TODO: triggerTransfer — route merchant_amount to the merchant's Xendit sub-account
-// after settlement. To be implemented when the settlement flow is finalised.
-// The provider.Transfer method and TransferRequest type are already defined in provider/interface.go.
-
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 func extractInvoiceID(event *domain.WebhookEvent) string {
@@ -398,12 +288,3 @@ func extractInvoiceID(event *domain.WebhookEvent) string {
 	return ""
 }
 
-func deriveEventID(headers map[string]string, eventType, invoiceID string) string {
-	if id := headers["webhook-id"]; id != "" {
-		return id
-	}
-	if id := headers["x-webhook-id"]; id != "" {
-		return id
-	}
-	return eventType + ":" + invoiceID
-}

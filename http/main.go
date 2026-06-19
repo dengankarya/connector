@@ -19,7 +19,6 @@ import (
 	"github.com/dengankarya/connector/internal/payment"
 	"github.com/dengankarya/connector/internal/payment/jobs"
 	"github.com/dengankarya/connector/internal/payment/ledger"
-	"github.com/dengankarya/connector/internal/payment/provider/xendit"
 	"github.com/dengankarya/connector/internal/payment/repository"
 	paymentservice "github.com/dengankarya/connector/internal/payment/service"
 	"github.com/dengankarya/connector/internal/payment/webhook"
@@ -82,7 +81,6 @@ func main() {
 		ledgerRepo            *repository.LedgerRepository
 		payoutRepo            *repository.PayoutRepository
 		txRunner              *repository.TxRunner
-		snapshotRepo          *repository.SettlementSnapshotRepository
 		ledgerSvc             *ledger.Service
 		webhookProc           *webhook.Processor
 		webhookHandler        *webhook.AsynqHandler
@@ -90,13 +88,10 @@ func main() {
 		paymentSvc            *paymentservice.PaymentService
 		expireJob             *jobs.ExpirePaymentsJob
 		retryJob              *jobs.RetryWebhooksJob
-		syncJob               *jobs.SyncSettlementJob
 		cancelExpiredOrderJob *jobs.CancelExpiredOrderJob
 		shipmentRepo          *shipmentrepo.ShipmentRepository
 		balanceSvc            *account.Service
 	)
-
-	var requestLogRepo *repository.WebhookRequestLogRepository
 
 	if cfg.DatabaseDSN != "" {
 		runMigrations(cfg.DatabaseDSN)
@@ -113,8 +108,6 @@ func main() {
 		ledgerRepo = repository.NewLedgerRepository(pool)
 		payoutRepo = repository.NewPayoutRepository(pool)
 		txRunner = repository.NewTxRunner(pool)
-		snapshotRepo = repository.NewSettlementSnapshotRepository(pool)
-		requestLogRepo = repository.NewWebhookRequestLogRepository(pool)
 		shipmentRepo = shipmentrepo.NewShipmentRepository(pool)
 		balanceRepo := account.NewRepository(pool)
 
@@ -122,20 +115,17 @@ func main() {
 		ledgerSvc = ledger.New(ledgerRepo, log.StandardLogger())
 		balanceSvc = account.NewService(balanceRepo, txRunner, log.StandardLogger())
 
-		xenditProv := xendit.New(cfg.XenditAPIKey, cfg.XenditWebhookToken, cfg.XenditBaseURL)
-
-		webhookProc = webhook.NewProcessor(eventRepo, txnRepo, ledgerSvc, txRunner, xenditProv, tokokaryaClient, balanceSvc, log.StandardLogger())
+		webhookProc = webhook.NewProcessor(eventRepo, txnRepo, ledgerSvc, txRunner, balanceSvc, log.StandardLogger())
 		webhookHandler = webhook.NewAsynqHandler(webhookProc, log.StandardLogger())
 
 		// Asynq client needed for ReplayService — created before the section below.
 		_ = payoutRepo // used by PayoutService; wired separately if needed
 
-		paymentSvc = paymentservice.NewPaymentService(txnRepo, xenditProv, txRunner, snapshotRepo, ledgerSvc, balanceSvc, log.StandardLogger())
+		paymentSvc = paymentservice.NewPaymentService(txnRepo, txRunner, ledgerSvc, balanceSvc, log.StandardLogger())
 
 		// Jobs
 		expireJob = jobs.NewExpirePaymentsJob(txnRepo, txRunner, log.StandardLogger())
 		retryJob = jobs.NewRetryWebhooksJob(nil, log.StandardLogger()) // replay wired after enqueuer init below
-		syncJob = jobs.NewSyncSettlementJob(txnRepo, snapshotRepo, xenditProv, log.StandardLogger())
 		_ = expireJob
 		_ = retryJob
 	}
@@ -173,7 +163,6 @@ func main() {
 		scheduler := asynq.NewScheduler(redisOpt, nil)
 		_, _ = scheduler.Register("*/5 * * * *", asynq.NewTask(worker.TaskExpirePayments, nil))
 		_, _ = scheduler.Register("*/10 * * * *", asynq.NewTask(worker.TaskRetryWebhooks, nil))
-		_, _ = scheduler.Register("0 18 * * *", asynq.NewTask(worker.TaskSyncSettlement, nil)) // 01:00 WIB
 
 		// Register job handlers on the worker mux.
 		workerMux.HandleFunc(worker.TaskExpirePayments, func(ctx context.Context, t *asynq.Task) error {
@@ -181,9 +170,6 @@ func main() {
 		})
 		workerMux.HandleFunc(worker.TaskRetryWebhooks, func(ctx context.Context, t *asynq.Task) error {
 			return retryJob.Run(ctx)
-		})
-		workerMux.HandleFunc(worker.TaskSyncSettlement, func(ctx context.Context, t *asynq.Task) error {
-			return syncJob.Run(ctx)
 		})
 
 		go func() {
@@ -209,12 +195,6 @@ func main() {
 	// ── Biteship webhook — public, no API key check ─────────────────────────
 	shipping.RegisterWebhookHandler(apiRootGroup, cfg.BiteshipWebhookSignatureKey, cfg.BiteshipWebhookSignatureValue, shipmentRepo, tokokaryaClient, balanceSvc, log.StandardLogger())
 
-	// ── Xendit webhook — public, no API key check ───────────────────────────
-	if cfg.DatabaseDSN != "" {
-		xenditProv := xendit.New(cfg.XenditAPIKey, cfg.XenditWebhookToken, cfg.XenditBaseURL)
-		payment.RegisterWebhookHandlerV2(apiRootGroup, cfg.XenditWebhookToken, asynqClient, webhookProc, xenditProv, requestLogRepo)
-	}
-
 	// ── Authenticated routes ─────────────────────────────────────────────────
 	app.Use(authenticatedRequest(cfg))
 
@@ -237,7 +217,6 @@ func main() {
 		payment.RegisterPaymentHandlers(
 			apiRootGroup.Group("/payments"),
 			paymentSvc,
-			replaySvc,
 			asynqClient,
 			log.StandardLogger(),
 		)
