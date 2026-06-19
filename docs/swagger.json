@@ -701,77 +701,6 @@
                 }
             }
         },
-        "/payments": {
-            "post": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "description": "Creates a new Xendit payment session (invoice) for a tenant order. Returns a checkout_url the customer visits to complete payment.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Payments"
-                ],
-                "summary": "Create payment session",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "format": "int64",
-                        "description": "Tenant ID",
-                        "name": "X-Tenant-ID",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "description": "Payment creation request",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/internal_payment.CreatePaymentBody"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Payment session created",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/common.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/github_com_dengankarya_connector_internal_payment_domain.PaymentTransaction"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    }
-                }
-            }
-        },
         "/payments/cancel-schedule": {
             "post": {
                 "security": [
@@ -838,7 +767,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Records a manual (off-platform) payment without calling Xendit. Returns a provider_invoice_id prefixed with \"manual-\" that Tokokarya uses as the payment_session_id.",
+                "description": "Records a manual (off-platform) payment. Returns a provider_invoice_id prefixed with \"manual-\". Confirm via POST /payments/manual/:id/confirm.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1058,7 +987,7 @@
                     },
                     {
                         "type": "string",
-                        "description": "Provider to filter by (e.g. 'xendit', 'manual_transfer')",
+                        "description": "Provider to filter by (e.g. 'manual_transfer')",
                         "name": "provider",
                         "in": "query"
                     }
@@ -1084,69 +1013,6 @@
                     },
                     "400": {
                         "description": "Invalid request or cursor",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    }
-                }
-            }
-        },
-        "/payments/webhooks/{event_id}/replay": {
-            "post": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "description": "Re-enqueues a previously received Xendit webhook event for reprocessing. Use force=true to re-enqueue already-processed events.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Payments"
-                ],
-                "summary": "Replay webhook event",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Webhook event UUID",
-                        "name": "event_id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Replay options",
-                        "name": "body",
-                        "in": "body",
-                        "schema": {
-                            "$ref": "#/definitions/internal_payment.ReplayWebhookBody"
-                        }
-                    }
-                ],
-                "responses": {
-                    "202": {
-                        "description": "Event enqueued for replay",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid event ID",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "409": {
-                        "description": "Event already processed; use force=true to override",
                         "schema": {
                             "$ref": "#/definitions/common.Response"
                         }
@@ -1195,78 +1061,6 @@
                 "responses": {
                     "200": {
                         "description": "Transaction details",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/common.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/github_com_dengankarya_connector_internal_payment_domain.PaymentTransaction"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid transaction ID",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "404": {
-                        "description": "Transaction not found",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    }
-                }
-            }
-        },
-        "/payments/{id}/refresh": {
-            "post": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "description": "Fetches the latest state of a payment session directly from Xendit and updates our records if the status changed. Safe to call multiple times. Returns immediately for manual payments or transactions already in a final state.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Payments"
-                ],
-                "summary": "Refresh payment transaction",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "format": "int64",
-                        "description": "Tenant ID",
-                        "name": "X-Tenant-ID",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Transaction UUID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Latest transaction state",
                         "schema": {
                             "allOf": [
                                 {
@@ -1989,47 +1783,6 @@
                     "Webhooks"
                 ],
                 "summary": "Biteship webhook",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    }
-                }
-            }
-        },
-        "/webhook/xendit": {
-            "post": {
-                "description": "Receives Xendit payment callback events. Validates the x-callback-token header, stores the raw event, and enqueues async processing. Always returns HTTP 200 to prevent Xendit retries on errors.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Webhooks"
-                ],
-                "summary": "Xendit webhook",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Xendit callback token",
-                        "name": "x-callback-token",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "description": "Xendit webhook event payload",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "type": "object"
-                        }
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -3177,62 +2930,6 @@
                 },
                 "shipping_fee": {
                     "type": "integer"
-                }
-            }
-        },
-        "internal_payment.CreatePaymentBody": {
-            "type": "object",
-            "properties": {
-                "allowed_payment_channels": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "amount": {
-                    "type": "integer"
-                },
-                "cancel_return_url": {
-                    "type": "string"
-                },
-                "currency": {
-                    "type": "string"
-                },
-                "customer_email": {
-                    "type": "string"
-                },
-                "customer_name": {
-                    "type": "string"
-                },
-                "customer_reference_id": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "idempotency_key": {
-                    "type": "string"
-                },
-                "metadata": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "order_number": {
-                    "type": "string"
-                },
-                "platform_fee": {
-                    "type": "integer"
-                },
-                "success_return_url": {
-                    "type": "string"
-                }
-            }
-        },
-        "internal_payment.ReplayWebhookBody": {
-            "type": "object",
-            "properties": {
-                "force": {
-                    "type": "boolean"
                 }
             }
         },

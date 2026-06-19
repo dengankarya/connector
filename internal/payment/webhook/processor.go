@@ -287,4 +287,3 @@ func extractInvoiceID(event *domain.WebhookEvent) string {
 	}
 	return ""
 }
-
