@@ -23,13 +23,6 @@ func NewClient(baseURL, apiKey string) *Client {
 	}
 }
 
-// ForwardWebhook forwards a raw Xendit payment webhook payload to Tokokarya.
-// The payload is sent as-is (no re-marshalling) so Tokokarya receives exactly
-// what Xendit sent.
-func (c *Client) ForwardWebhook(ctx context.Context, payload []byte) error {
-	return c.post(ctx, "/api/webhooks/xenplatform", payload)
-}
-
 // ForwardShipmentWebhook forwards a raw Biteship shipment webhook payload to Tokokarya.
 func (c *Client) ForwardShipmentWebhook(ctx context.Context, payload []byte) error {
 	return c.post(ctx, "/api/webhooks/biteship", payload)

@@ -2,7 +2,7 @@ package webhook
 
 import "encoding/json"
 
-// paymentDetails holds the fields we extract from a Xendit payment webhook payload.
+// paymentDetails holds the fields we extract from a payment webhook payload.
 type paymentDetails struct {
 	PaymentSessionID string // payment_session_id (ps-xxx); primary transaction lookup key
 	PaymentID        string // payment_id (py-xxx); stored as ProviderPaymentID on capture
@@ -10,7 +10,7 @@ type paymentDetails struct {
 	FailureCode      string // failure_code; non-empty on payment.failure
 }
 
-// parsePaymentDetails extracts key fields from a raw Xendit payment webhook payload.
+// parsePaymentDetails extracts key fields from a raw payment webhook payload.
 // Returns zero-value struct on any parse error — callers handle missing fields gracefully.
 func parsePaymentDetails(raw []byte) paymentDetails {
 	var envelope struct {

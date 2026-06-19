@@ -7,13 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"strings"
 	"time"
 
 	"github.com/dengankarya/connector/internal/payment/domain"
 	"github.com/dengankarya/connector/internal/payment/ledger"
-	"github.com/dengankarya/connector/internal/payment/provider"
 	"github.com/dengankarya/connector/internal/payment/repository"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -21,26 +19,6 @@ import (
 
 // ErrInvalidCursor is returned when the cursor query parameter cannot be decoded.
 var ErrInvalidCursor = errors.New("invalid cursor")
-
-// CreatePaymentRequest is the input for creating a new payment transaction.
-type CreatePaymentRequest struct {
-	TenantID               int64
-	OrderNumber            string
-	IdempotencyKey         string
-	Amount                 int64
-	Currency               string
-	PlatformFee            int64    // optional; connector commission; defaults to 0
-	ShippingFee            int64    // optional; topped up to merchant's shipping balance; defaults to 0
-	AllowedPaymentChannels []string // optional; restrict which channels appear on checkout page
-	SuccessReturnURL       string   // optional; redirect URL after successful payment
-	CancelReturnURL        string   // optional; redirect URL if customer cancels
-	Description            string
-	CustomerEmail          string
-	CustomerName           string
-	CustomerReferenceID    string
-	ExpiresAt              *time.Time
-	Metadata               map[string]string
-}
 
 // ShippingBalanceCreditor credits a merchant's shipping balance from the shipping_fee
 // of a confirmed payment. Must be callable inside an existing DB transaction.
@@ -51,8 +29,6 @@ type ShippingBalanceCreditor interface {
 // PaymentService handles payment creation and querying.
 type PaymentService struct {
 	txnRepo          *repository.TransactionRepository
-	snapshotRepo     *repository.SettlementSnapshotRepository
-	provider         provider.PaymentProvider
 	ledger           *ledger.Service
 	txRunner         *repository.TxRunner
 	shippingCreditor ShippingBalanceCreditor // optional; nil = skip
@@ -63,173 +39,18 @@ type PaymentService struct {
 // shippingCreditor may be nil — shipping balance credit is skipped when not configured.
 func NewPaymentService(
 	txnRepo *repository.TransactionRepository,
-	prov provider.PaymentProvider,
 	txRunner *repository.TxRunner,
-	snapshotRepo *repository.SettlementSnapshotRepository,
 	ledgerSvc *ledger.Service,
 	shippingCreditor ShippingBalanceCreditor,
 	logger *logrus.Logger,
 ) *PaymentService {
 	return &PaymentService{
 		txnRepo:          txnRepo,
-		snapshotRepo:     snapshotRepo,
-		provider:         prov,
 		ledger:           ledgerSvc,
 		txRunner:         txRunner,
 		shippingCreditor: shippingCreditor,
 		logger:           logger,
 	}
-}
-
-// CreatePayment creates a payment invoice at the provider and persists the transaction.
-// Idempotent: if a transaction with the same (tenant_id, idempotency_key) already exists,
-// it returns the existing record without hitting the provider again.
-func (s *PaymentService) CreatePayment(ctx context.Context, req CreatePaymentRequest) (*domain.PaymentTransaction, error) {
-	log := s.logger.WithFields(logrus.Fields{
-		"component":       "payment_service",
-		"operation":       "create_payment",
-		"tenant_id":       req.TenantID,
-		"order_number":    req.OrderNumber,
-		"idempotency_key": req.IdempotencyKey,
-		"amount":          req.Amount,
-		"currency":        req.Currency,
-	})
-
-	merchantAmount := req.Amount - req.PlatformFee - req.ShippingFee
-	if merchantAmount < 0 {
-		return nil, fmt.Errorf("platform_fee (%d) + shipping_fee (%d) exceeds amount (%d)", req.PlatformFee, req.ShippingFee, req.Amount)
-	}
-
-	// Merge caller metadata with platform-level fields visible on the Xendit dashboard.
-	// tenant_id lets you filter master-account transactions by merchant on Xendit.
-	meta := make(map[string]string, len(req.Metadata)+2)
-	maps.Copy(meta, req.Metadata)
-	meta["tenant_id"] = fmt.Sprintf("%d", req.TenantID)
-	if req.OrderNumber != "" {
-		meta["order_number"] = req.OrderNumber
-	}
-
-	// Step 1: Create a Xendit Payment Session (hosted checkout).
-	invoice, err := s.provider.CreateInvoice(ctx, provider.CreateInvoiceRequest{
-		ExternalID:             req.IdempotencyKey,
-		Amount:                 req.Amount,
-		Currency:               req.Currency,
-		AllowedPaymentChannels: req.AllowedPaymentChannels,
-		SuccessReturnURL:       req.SuccessReturnURL,
-		CancelReturnURL:        req.CancelReturnURL,
-		Description:            req.Description,
-		CustomerEmail:          req.CustomerEmail,
-		CustomerName:           req.CustomerName,
-		CustomerReferenceID:    req.CustomerReferenceID,
-		ExpiresAt:              req.ExpiresAt,
-		Metadata:               meta,
-	})
-	if err != nil {
-		log.WithError(err).Error("create payment: provider error")
-		return nil, fmt.Errorf("create invoice at provider: %w", err)
-	}
-
-	log = log.WithField("provider_invoice_id", invoice.ProviderInvoiceID)
-
-	// Step 2: Persist the transaction.
-	txn := &domain.PaymentTransaction{
-		TenantID:          req.TenantID,
-		OrderNumber:       req.OrderNumber,
-		IdempotencyKey:    req.IdempotencyKey,
-		Provider:          s.provider.ProviderName(),
-		ProviderInvoiceID: invoice.ProviderInvoiceID,
-		CheckoutURL:       invoice.CheckoutURL,
-		Amount:            req.Amount,
-		Currency:          req.Currency,
-		PlatformFee:       req.PlatformFee,
-		ShippingFee:       req.ShippingFee,
-		MerchantAmount:    merchantAmount,
-		Status:            domain.StatusAwaitingPayment,
-		Description:       req.Description,
-		Metadata:          meta,
-		ExpiresAt:         invoice.ExpiresAt,
-	}
-
-	if err := s.txnRepo.Create(ctx, txn); err != nil {
-		if err == domain.ErrDuplicateIdempotencyKey {
-			log.Warn("create payment: idempotency hit — returning existing transaction")
-			return s.getByIdempotencyKey(ctx, req.TenantID, req.IdempotencyKey)
-		}
-		log.WithError(err).Error("create payment: db insert failed")
-		return nil, fmt.Errorf("persist transaction: %w", err)
-	}
-
-	log.WithFields(logrus.Fields{
-		"transaction_id": txn.ID,
-		"status":         txn.Status,
-		"expires_at":     txn.ExpiresAt,
-	}).Info("payment transaction created")
-
-	return txn, nil
-}
-
-// RefreshPayment fetches the latest state from Xendit for a single transaction,
-// updates our DB if the status changed, and returns the current record.
-// For manual payments or already-final transactions it returns the DB record immediately.
-func (s *PaymentService) RefreshPayment(ctx context.Context, tenantID int64, txnID uuid.UUID) (*domain.PaymentTransaction, error) {
-	txn, err := s.txnRepo.GetByID(ctx, txnID)
-	if err != nil {
-		return nil, fmt.Errorf("refresh payment %s: %w", txnID, err)
-	}
-	if txn.TenantID != tenantID {
-		return nil, domain.ErrNotFound{Entity: "payment_transaction", ID: txnID.String()}
-	}
-
-	// Nothing to fetch for final states or manual payments (no Xendit session).
-	if txn.IsFinalState() || strings.HasPrefix(txn.ProviderInvoiceID, "manual-") {
-		return txn, nil
-	}
-
-	invoice, err := s.provider.GetInvoice(ctx, txn.ProviderInvoiceID)
-	if err != nil {
-		return nil, fmt.Errorf("refresh payment: fetch from provider: %w", err)
-	}
-
-	changed := false
-	switch invoice.Status {
-	case "COMPLETED":
-		if err := txn.TransitionTo(domain.StatusPaid); err == nil {
-			now := time.Now().UTC()
-			txn.PaidAt = &now
-			changed = true
-		}
-	case "EXPIRED":
-		if err := txn.TransitionTo(domain.StatusExpired); err == nil {
-			changed = true
-		}
-	case "CANCELLED":
-		if err := txn.TransitionTo(domain.StatusVoided); err == nil {
-			changed = true
-		}
-	}
-
-	// Backfill payment_channel from allowed_payment_channels[0] when still empty.
-	// Callers always send exactly one channel, so [0] is the channel the customer used.
-	if txn.PaymentChannel == "" && len(invoice.AllowedPaymentChannels) == 1 {
-		txn.PaymentChannel = invoice.AllowedPaymentChannels[0]
-		if !changed {
-			// Status didn't change but we still need to persist payment_channel.
-			txn.Version++
-			changed = true
-		}
-	}
-
-	if changed {
-		if err := s.txnRepo.Update(ctx, txn); err != nil {
-			if errors.Is(err, domain.ErrVersionConflict) {
-				// A concurrent update (e.g. a webhook) beat us — return the fresh DB state.
-				return s.GetPayment(ctx, tenantID, txnID)
-			}
-			return nil, fmt.Errorf("refresh payment: persist update: %w", err)
-		}
-	}
-
-	return txn, nil
 }
 
 // GetPayment fetches a payment transaction by ID.
@@ -245,21 +66,10 @@ func (s *PaymentService) GetPayment(ctx context.Context, tenantID int64, txnID u
 	return txn, nil
 }
 
-// getByIdempotencyKey is used to return the existing transaction on an idempotency hit.
-// It looks up the transaction by provider_invoice_id using the external_id convention.
-func (s *PaymentService) getByIdempotencyKey(_ context.Context, _ int64, _ string) (*domain.PaymentTransaction, error) {
-	// In a full implementation this would do a SELECT by (tenant_id, idempotency_key).
-	// For now, return the conflict error so the caller can decide how to handle it.
-	return nil, domain.ErrDuplicateIdempotencyKey
-}
-
 // ─── Manual payment ───────────────────────────────────────────────────────────
 
 // CreateManualPaymentRequest is the input for recording a transaction that is paid
-// outside Xendit (cash, direct bank transfer, etc.).
-// The connector stores the transaction and returns a provider_invoice_id that Tokokarya
-// must include as payment_session_id when it later sends the confirmation webhook to
-// POST /webhook/xendit.
+// outside the platform (cash, direct bank transfer, etc.).
 type CreateManualPaymentRequest struct {
 	TenantID       int64
 	OrderNumber    string
@@ -275,8 +85,7 @@ type CreateManualPaymentRequest struct {
 }
 
 // CreateManualPayment records a payment transaction without calling any external provider.
-// The returned transaction has provider="manual_transfer". Confirmation is done via
-// POST /api/payments/manual/:id/confirm — not through the Xendit webhook pipeline.
+// The returned transaction has provider="manual_transfer". Confirm via POST /api/payments/manual/:id/confirm.
 func (s *PaymentService) CreateManualPayment(ctx context.Context, req CreateManualPaymentRequest) (*domain.PaymentTransaction, error) {
 	log := s.logger.WithFields(logrus.Fields{
 		"component":       "payment_service",
