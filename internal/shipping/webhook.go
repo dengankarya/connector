@@ -276,9 +276,9 @@ func (ctrl *webhookController) handleOrderPrice(ctx context.Context, body []byte
 		return nil, err
 	}
 
-	// Adjust the merchant's shipping balance for the price difference and record the audit row.
-	// old → new: positive diff deducts, negative diff credits.
-	if ctrl.holds != nil && oldPrice != evt.Price {
+	// Only deduct when the actual price is higher than what was recorded — webhooks must never
+	// add to the merchant's balance. Also skip for draft shipments (no balance consumed yet).
+	if ctrl.holds != nil && evt.Price > oldPrice && s.Status != domain.ShipmentStatusDraft {
 		if err := ctrl.holds.AdjustShippingBalance(ctx, s.TenantID, oldPrice, evt.Price, "IDR", s.OrderNumber); err != nil {
 			ctrl.logger.WithError(err).WithFields(log.Fields{
 				"tenant_id":    s.TenantID,
