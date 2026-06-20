@@ -215,7 +215,8 @@ func main() {
 	region.RegisterHandlers(apiRootGroup.Group("/regions"), regionSvc)
 
 	geoapifyClient := geoapify.NewClient(cfg.GeoapifyAPIKey, cfg.GeoapifyBaseURL)
-	geocodingService := geocoding.NewService(geoapifyClient, log.StandardLogger())
+	cachedGeocoder := geocoding.NewCachedGeocoder(geoapifyClient)
+	geocodingService := geocoding.NewService(cachedGeocoder, log.StandardLogger())
 	geocoding.RegisterHandlers(apiRootGroup.Group("/geocoding"), geocodingService)
 
 	// Payment module endpoints (requires DB).
