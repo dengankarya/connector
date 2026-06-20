@@ -16,6 +16,7 @@ import (
 	"github.com/dengankarya/connector/common"
 	"github.com/dengankarya/connector/config"
 	"github.com/dengankarya/connector/internal/account"
+	"github.com/dengankarya/connector/internal/geocoding"
 	"github.com/dengankarya/connector/internal/payment"
 	"github.com/dengankarya/connector/internal/payment/jobs"
 	"github.com/dengankarya/connector/internal/payment/ledger"
@@ -28,6 +29,7 @@ import (
 	"github.com/dengankarya/connector/internal/worker"
 	"github.com/dengankarya/connector/pkg/biteship"
 	"github.com/dengankarya/connector/pkg/dbconn"
+	"github.com/dengankarya/connector/pkg/geoapify"
 	"github.com/dengankarya/connector/pkg/tokokarya"
 	"github.com/dengankarya/connector/pkg/wilayah"
 	"github.com/golang-migrate/migrate/v4"
@@ -211,6 +213,10 @@ func main() {
 	cachedWilayah := region.NewCachedClient(wilayahClient)
 	regionSvc := region.NewRegionService(cachedWilayah)
 	region.RegisterHandlers(apiRootGroup.Group("/regions"), regionSvc)
+
+	geoapifyClient := geoapify.NewClient(cfg.GeoapifyAPIKey, cfg.GeoapifyBaseURL)
+	geocodingService := geocoding.NewService(geoapifyClient, log.StandardLogger())
+	geocoding.RegisterHandlers(apiRootGroup.Group("/geocoding"), geocodingService)
 
 	// Payment module endpoints (requires DB).
 	if paymentSvc != nil {
