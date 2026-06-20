@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	github.com/caarlos0/env/v11 v11.4.1
+	github.com/getsentry/sentry-go v0.46.2
 	github.com/gofiber/fiber/v3 v3.2.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/google/uuid v1.6.0
