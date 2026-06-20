@@ -29,8 +29,8 @@ type Configuration struct {
 
 	RedisURL string `env:"REDIS_URL,notEmpty" envDefault:"redis://localhost:6379"`
 
-	SwaggerUsername string `env:"SWAGGER_USERNAME"`
-	SwaggerPassword string `env:"SWAGGER_PASSWORD"`
+	GeoapifyAPIKey  string `env:"GEOAPIFY_API_KEY"`
+	GeoapifyBaseURL string `env:"GEOAPIFY_BASE_URL"`
 }
 
 func (c Configuration) IsThisRequestAuthenticated(apiKey string) bool {

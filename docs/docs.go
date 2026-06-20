@@ -704,6 +704,55 @@ const docTemplate = `{
                 }
             }
         },
+        "/geocoding": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Geocode an address using the provided address query",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "geocoding"
+                ],
+                "summary": "Geocode an address",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Address to geocode",
+                        "name": "address",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_dengankarya_connector_common.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/payments/cancel-schedule": {
             "post": {
                 "security": [
@@ -1869,6 +1918,19 @@ const docTemplate = `{
                     }
                 },
                 "next_cursor": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_dengankarya_connector_common.Response": {
+            "type": "object",
+            "properties": {
+                "data": {},
+                "error": {},
+                "message": {
+                    "type": "string"
+                },
+                "status": {
                     "type": "string"
                 }
             }

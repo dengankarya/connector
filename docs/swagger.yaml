@@ -51,6 +51,15 @@ definitions:
       next_cursor:
         type: string
     type: object
+  github_com_dengankarya_connector_common.Response:
+    properties:
+      data: {}
+      error: {}
+      message:
+        type: string
+      status:
+        type: string
+    type: object
   github_com_dengankarya_connector_internal_payment_domain.PaymentStatus:
     enum:
     - pending
@@ -1311,6 +1320,37 @@ paths:
       summary: Get transaction detail
       tags:
       - Account
+  /geocoding:
+    get:
+      consumes:
+      - application/json
+      description: Geocode an address using the provided address query
+      parameters:
+      - description: Address to geocode
+        in: query
+        name: address
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_dengankarya_connector_common.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Geocode an address
+      tags:
+      - geocoding
   /payments/{id}:
     get:
       description: Retrieves a payment transaction by its UUID for the authenticated
