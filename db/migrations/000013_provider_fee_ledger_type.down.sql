@@ -1,0 +1,3 @@
+-- Postgres does not support removing enum values.
+-- To roll back, recreate the type without 'provider_fee' if no rows use it.
+-- This migration is intentionally a no-op for safety.

@@ -1,20 +1,23 @@
 package payment
 
+import "time"
+
 // CreatePaymentBody is the request body for POST /payments.
 type CreatePaymentBody struct {
-	OrderNumber            string         `json:"order_number"`
-	IdempotencyKey         string         `json:"idempotency_key"`
-	Amount                 int64          `json:"amount"`
-	Currency               string         `json:"currency"`
-	PlatformFee            int64          `json:"platform_fee"`
-	AllowedPaymentChannels []string       `json:"allowed_payment_channels"`
-	SuccessReturnURL       string         `json:"success_return_url"`
-	CancelReturnURL        string         `json:"cancel_return_url"`
-	Description            string         `json:"description"`
-	CustomerEmail          string         `json:"customer_email"`
-	CustomerName           string         `json:"customer_name"`
-	CustomerReferenceID    string         `json:"customer_reference_id"`
-	Metadata               map[string]any `json:"metadata"`
+	OrderNumber      string            `json:"order_number"`
+	IdempotencyKey   string            `json:"idempotency_key"`
+	Amount           int64             `json:"amount"`
+	Currency         string            `json:"currency"`
+	PlatformFee      int64             `json:"platform_fee"`
+	ShippingFee      int64             `json:"shipping_fee"`
+	SuccessReturnURL string            `json:"success_return_url"`
+	CancelReturnURL  string            `json:"cancel_return_url"`
+	Description      string            `json:"description"`
+	CustomerName     string            `json:"customer_name"`
+	CustomerEmail    string            `json:"customer_email"`
+	CustomerMobile   string            `json:"customer_mobile"`
+	ExpiresAt        *time.Time        `json:"expires_at"`
+	Metadata         map[string]string `json:"metadata"`
 }
 
 // CreateManualPaymentBody is the request body for POST /payments/manual.

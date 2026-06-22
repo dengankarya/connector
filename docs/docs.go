@@ -753,6 +753,83 @@ const docTemplate = `{
                 }
             }
         },
+        "/payments": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Creates a payment session via the configured provider (Mayar) and returns the checkout URL.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Create payment",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "Tenant ID",
+                        "name": "X-Tenant-ID",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Payment request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_payment.CreatePaymentBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Payment created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_dengankarya_connector_internal_payment_domain.PaymentTransaction"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "Duplicate idempotency key",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/payments/cancel-schedule": {
             "post": {
                 "security": [
@@ -2995,6 +3072,56 @@ const docTemplate = `{
                 },
                 "shipping_fee": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_payment.CreatePaymentBody": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer"
+                },
+                "cancel_return_url": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "customer_email": {
+                    "type": "string"
+                },
+                "customer_mobile": {
+                    "type": "string"
+                },
+                "customer_name": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "idempotency_key": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "order_number": {
+                    "type": "string"
+                },
+                "platform_fee": {
+                    "type": "integer"
+                },
+                "shipping_fee": {
+                    "type": "integer"
+                },
+                "success_return_url": {
+                    "type": "string"
                 }
             }
         },

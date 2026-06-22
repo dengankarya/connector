@@ -12,6 +12,7 @@ import (
 
 	"github.com/dengankarya/connector/internal/payment/domain"
 	"github.com/dengankarya/connector/internal/payment/ledger"
+	"github.com/dengankarya/connector/internal/payment/provider"
 	"github.com/dengankarya/connector/internal/payment/repository"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -235,6 +236,103 @@ func (s *PaymentService) ConfirmManualPayment(ctx context.Context, req ConfirmMa
 	if err != nil {
 		return nil, err
 	}
+	return txn, nil
+}
+
+// ─── Provider payment ─────────────────────────────────────────────────────────
+
+// CreateProviderPaymentRequest is the input for creating a payment via an external provider.
+type CreateProviderPaymentRequest struct {
+	TenantID         int64
+	OrderNumber      string
+	IdempotencyKey   string
+	Amount           int64
+	Currency         string
+	PlatformFee      int64
+	ShippingFee      int64
+	CustomerName     string
+	CustomerEmail    string
+	CustomerMobile   string
+	Description      string
+	SuccessReturnURL string
+	CancelReturnURL  string
+	ExpiresAt        *time.Time
+	Metadata         map[string]string
+}
+
+// CreateProviderPayment creates a payment session at the given provider and persists
+// the transaction in awaiting_payment status. The returned transaction includes the
+// checkout_url returned by the provider.
+//
+// Idempotent: if (tenant_id, idempotency_key) already exists, returns domain.ErrDuplicateIdempotencyKey.
+func (s *PaymentService) CreateProviderPayment(ctx context.Context, prov provider.PaymentProvider, req CreateProviderPaymentRequest) (*domain.PaymentTransaction, error) {
+	log := s.logger.WithFields(logrus.Fields{
+		"component":       "payment_service",
+		"operation":       "create_provider_payment",
+		"provider":        prov.ProviderName(),
+		"tenant_id":       req.TenantID,
+		"order_number":    req.OrderNumber,
+		"idempotency_key": req.IdempotencyKey,
+		"amount":          req.Amount,
+		"currency":        req.Currency,
+	})
+
+	merchantAmount := req.Amount - req.PlatformFee - req.ShippingFee
+	if merchantAmount < 0 {
+		return nil, fmt.Errorf("platform_fee (%d) + shipping_fee (%d) exceeds amount (%d)", req.PlatformFee, req.ShippingFee, req.Amount)
+	}
+
+	invoice, err := prov.CreateInvoice(ctx, provider.CreateInvoiceRequest{
+		ExternalID:       req.IdempotencyKey,
+		Amount:           req.Amount,
+		Currency:         req.Currency,
+		Description:      req.Description,
+		CustomerName:     req.CustomerName,
+		CustomerEmail:    req.CustomerEmail,
+		CustomerMobile:   req.CustomerMobile,
+		SuccessReturnURL: req.SuccessReturnURL,
+		CancelReturnURL:  req.CancelReturnURL,
+		ExpiresAt:        req.ExpiresAt,
+		Metadata:         req.Metadata,
+	})
+	if err != nil {
+		log.WithError(err).Error("create provider payment: create invoice failed")
+		return nil, fmt.Errorf("create provider invoice: %w", err)
+	}
+
+	txn := &domain.PaymentTransaction{
+		TenantID:          req.TenantID,
+		OrderNumber:       req.OrderNumber,
+		IdempotencyKey:    req.IdempotencyKey,
+		Provider:          prov.ProviderName(),
+		ProviderInvoiceID: invoice.ProviderInvoiceID,
+		CheckoutURL:       invoice.CheckoutURL,
+		Amount:            req.Amount,
+		Currency:          req.Currency,
+		PlatformFee:       req.PlatformFee,
+		ShippingFee:       req.ShippingFee,
+		MerchantAmount:    merchantAmount,
+		Status:            domain.StatusAwaitingPayment,
+		Description:       req.Description,
+		ExpiresAt:         invoice.ExpiresAt,
+		Metadata:          req.Metadata,
+	}
+
+	if err := s.txnRepo.Create(ctx, txn); err != nil {
+		if err == domain.ErrDuplicateIdempotencyKey {
+			log.Warn("create provider payment: idempotency hit")
+			return nil, domain.ErrDuplicateIdempotencyKey
+		}
+		log.WithError(err).Error("create provider payment: db insert failed")
+		return nil, fmt.Errorf("persist provider transaction: %w", err)
+	}
+
+	log.WithFields(logrus.Fields{
+		"transaction_id":      txn.ID,
+		"provider_invoice_id": txn.ProviderInvoiceID,
+		"checkout_url":        txn.CheckoutURL,
+	}).Info("provider payment transaction created")
+
 	return txn, nil
 }
 

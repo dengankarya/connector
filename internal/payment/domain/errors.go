@@ -64,4 +64,5 @@ var (
 	ErrInvalidSignature        = fmt.Errorf("invalid webhook signature")
 	ErrMissingSignature        = fmt.Errorf("missing webhook signature header")
 	ErrEventAlreadyProcessed   = fmt.Errorf("webhook event already processed (use force=true to replay)")
+	ErrNotSupported            = fmt.Errorf("operation not supported by this provider")
 )

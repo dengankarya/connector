@@ -1,6 +1,8 @@
 package webhook
 
-import "encoding/json"
+import (
+	"encoding/json"
+)
 
 // paymentDetails holds the fields we extract from a payment webhook payload.
 type paymentDetails struct {
@@ -39,4 +41,18 @@ func parsePaymentDetails(raw []byte) paymentDetails {
 		ChannelCode:      channelCode,
 		FailureCode:      envelope.Data.FailureCode,
 	}
+}
+
+// parseMayarTransactionID extracts data.id from a Mayar webhook payload.
+// This is stored as both provider_event_id and provider_invoice_id for Mayar events.
+func parseMayarTransactionID(raw []byte) string {
+	var envelope struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return ""
+	}
+	return envelope.Data.ID
 }

@@ -28,6 +28,11 @@ func (c *Client) ForwardShipmentWebhook(ctx context.Context, payload []byte) err
 	return c.post(ctx, "/api/webhooks/biteship", payload)
 }
 
+// ForwardPaymentWebhook forwards a normalized payment status event to Tokokarya.
+func (c *Client) ForwardPaymentWebhook(ctx context.Context, payload []byte) error {
+	return c.post(ctx, "/api/webhooks/payment", payload)
+}
+
 // CancelExpiredOrders notifies Tokokarya to cancel a specific order via the cron endpoint.
 func (c *Client) CancelExpiredOrders(ctx context.Context, orderNumber string) error {
 	body, err := json.Marshal(map[string]string{"order_number": orderNumber})

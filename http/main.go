@@ -20,6 +20,8 @@ import (
 	"github.com/dengankarya/connector/internal/payment"
 	"github.com/dengankarya/connector/internal/payment/jobs"
 	"github.com/dengankarya/connector/internal/payment/ledger"
+	"github.com/dengankarya/connector/internal/payment/provider"
+	mayarprovider "github.com/dengankarya/connector/internal/payment/provider/mayar"
 	"github.com/dengankarya/connector/internal/payment/repository"
 	paymentservice "github.com/dengankarya/connector/internal/payment/service"
 	"github.com/dengankarya/connector/internal/payment/webhook"
@@ -30,6 +32,7 @@ import (
 	"github.com/dengankarya/connector/pkg/biteship"
 	"github.com/dengankarya/connector/pkg/dbconn"
 	"github.com/dengankarya/connector/pkg/geoapify"
+	mayarpkg "github.com/dengankarya/connector/pkg/mayar"
 	"github.com/dengankarya/connector/pkg/tokokarya"
 	"github.com/dengankarya/connector/pkg/wilayah"
 	"github.com/golang-migrate/migrate/v4"
@@ -78,21 +81,23 @@ func main() {
 
 	// ── PostgreSQL ──────────────────────────────────────────────────────────
 	var (
-		txnRepo               *repository.TransactionRepository
-		eventRepo             *repository.WebhookEventRepository
-		ledgerRepo            *repository.LedgerRepository
-		payoutRepo            *repository.PayoutRepository
-		txRunner              *repository.TxRunner
-		ledgerSvc             *ledger.Service
-		webhookProc           *webhook.Processor
-		webhookHandler        *webhook.AsynqHandler
-		replaySvc             *webhook.ReplayService
-		paymentSvc            *paymentservice.PaymentService
-		expireJob             *jobs.ExpirePaymentsJob
-		retryJob              *jobs.RetryWebhooksJob
-		cancelExpiredOrderJob *jobs.CancelExpiredOrderJob
-		shipmentRepo          *shipmentrepo.ShipmentRepository
-		balanceSvc            *account.Service
+		txnRepo                 *repository.TransactionRepository
+		eventRepo               *repository.WebhookEventRepository
+		ledgerRepo              *repository.LedgerRepository
+		payoutRepo              *repository.PayoutRepository
+		logRepo                 *repository.WebhookRequestLogRepository
+		txRunner                *repository.TxRunner
+		ledgerSvc               *ledger.Service
+		webhookProc             *webhook.Processor
+		webhookHandler          *webhook.AsynqHandler
+		replaySvc               *webhook.ReplayService
+		paymentSvc              *paymentservice.PaymentService
+		expireJob               *jobs.ExpirePaymentsJob
+		retryJob                *jobs.RetryWebhooksJob
+		syncMayarSettlementsJob *jobs.SyncMayarSettlementsJob
+		cancelExpiredOrderJob   *jobs.CancelExpiredOrderJob
+		shipmentRepo            *shipmentrepo.ShipmentRepository
+		balanceSvc              *account.Service
 	)
 
 	if cfg.DatabaseDSN != "" {
@@ -109,6 +114,7 @@ func main() {
 		eventRepo = repository.NewWebhookEventRepository(pool)
 		ledgerRepo = repository.NewLedgerRepository(pool)
 		payoutRepo = repository.NewPayoutRepository(pool)
+		logRepo = repository.NewWebhookRequestLogRepository(pool)
 		txRunner = repository.NewTxRunner(pool)
 		shipmentRepo = shipmentrepo.NewShipmentRepository(pool)
 		balanceRepo := account.NewRepository(pool)
@@ -117,7 +123,7 @@ func main() {
 		ledgerSvc = ledger.New(ledgerRepo, log.StandardLogger())
 		balanceSvc = account.NewService(balanceRepo, txRunner, log.StandardLogger())
 
-		webhookProc = webhook.NewProcessor(eventRepo, txnRepo, ledgerSvc, txRunner, balanceSvc, log.StandardLogger())
+		webhookProc = webhook.NewProcessor(eventRepo, txnRepo, ledgerSvc, txRunner, balanceSvc, tokokaryaClient, log.StandardLogger())
 		webhookHandler = webhook.NewAsynqHandler(webhookProc, log.StandardLogger())
 
 		// Asynq client needed for ReplayService — created before the section below.
@@ -128,6 +134,10 @@ func main() {
 		// Jobs
 		expireJob = jobs.NewExpirePaymentsJob(txnRepo, txRunner, log.StandardLogger())
 		retryJob = jobs.NewRetryWebhooksJob(nil, log.StandardLogger()) // replay wired after enqueuer init below
+		if cfg.MayarAPIKey != "" {
+			mayarSyncer := mayarprovider.NewProvider(mayarpkg.NewClient(cfg.MayarAPIKey, cfg.MayarBaseURL), cfg.MayarCallbackToken)
+			syncMayarSettlementsJob = jobs.NewSyncMayarSettlementsJob(mayarSyncer, txnRepo, ledgerSvc, txRunner, log.StandardLogger())
+		}
 		_ = expireJob
 		_ = retryJob
 	}
@@ -165,6 +175,9 @@ func main() {
 		scheduler := asynq.NewScheduler(redisOpt, nil)
 		_, _ = scheduler.Register("*/5 * * * *", asynq.NewTask(worker.TaskExpirePayments, nil))
 		_, _ = scheduler.Register("*/10 * * * *", asynq.NewTask(worker.TaskRetryWebhooks, nil))
+		if syncMayarSettlementsJob != nil {
+			_, _ = scheduler.Register("*/30 * * * *", asynq.NewTask(worker.TaskSyncMayarSettlements, nil))
+		}
 
 		// Register job handlers on the worker mux.
 		workerMux.HandleFunc(worker.TaskExpirePayments, func(ctx context.Context, t *asynq.Task) error {
@@ -173,6 +186,11 @@ func main() {
 		workerMux.HandleFunc(worker.TaskRetryWebhooks, func(ctx context.Context, t *asynq.Task) error {
 			return retryJob.Run(ctx)
 		})
+		if syncMayarSettlementsJob != nil {
+			workerMux.HandleFunc(worker.TaskSyncMayarSettlements, func(ctx context.Context, t *asynq.Task) error {
+				return syncMayarSettlementsJob.Run(ctx)
+			})
+		}
 
 		go func() {
 			if err := scheduler.Run(); err != nil {
@@ -196,6 +214,13 @@ func main() {
 
 	// ── Biteship webhook — public, no API key check ─────────────────────────
 	shipping.RegisterWebhookHandler(apiRootGroup, cfg.BiteshipWebhookSignatureKey, cfg.BiteshipWebhookSignatureValue, shipmentRepo, tokokaryaClient, balanceSvc, log.StandardLogger())
+
+	// ── Mayar webhook — public, validated by X-Callback-Token ───────────────
+	if cfg.MayarAPIKey != "" && eventRepo != nil {
+		mayarClient := mayarpkg.NewClient(cfg.MayarAPIKey, cfg.MayarBaseURL)
+		mayarProv := mayarprovider.NewProvider(mayarClient, cfg.MayarCallbackToken)
+		webhook.RegisterIngestHandler(apiRootGroup, "/webhook/mayar", mayarProv, eventRepo, logRepo, asynqClient, log.StandardLogger())
+	}
 
 	// ── Authenticated routes ─────────────────────────────────────────────────
 	app.Use(authenticatedRequest(cfg))
@@ -221,9 +246,14 @@ func main() {
 
 	// Payment module endpoints (requires DB).
 	if paymentSvc != nil {
+		var prov provider.PaymentProvider
+		if cfg.MayarAPIKey != "" {
+			prov = mayarprovider.NewProvider(mayarpkg.NewClient(cfg.MayarAPIKey, cfg.MayarBaseURL), cfg.MayarCallbackToken)
+		}
 		payment.RegisterPaymentHandlers(
 			apiRootGroup.Group("/payments"),
 			paymentSvc,
+			prov,
 			asynqClient,
 			log.StandardLogger(),
 		)

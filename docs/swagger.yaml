@@ -860,6 +860,39 @@ definitions:
       shipping_fee:
         type: integer
     type: object
+  internal_payment.CreatePaymentBody:
+    properties:
+      amount:
+        type: integer
+      cancel_return_url:
+        type: string
+      currency:
+        type: string
+      customer_email:
+        type: string
+      customer_mobile:
+        type: string
+      customer_name:
+        type: string
+      description:
+        type: string
+      expires_at:
+        type: string
+      idempotency_key:
+        type: string
+      metadata:
+        additionalProperties:
+          type: string
+        type: object
+      order_number:
+        type: string
+      platform_fee:
+        type: integer
+      shipping_fee:
+        type: integer
+      success_return_url:
+        type: string
+    type: object
   internal_payment.ScheduleOrderCancellationBody:
     properties:
       order_number:
@@ -1351,6 +1384,54 @@ paths:
       summary: Geocode an address
       tags:
       - geocoding
+  /payments:
+    post:
+      consumes:
+      - application/json
+      description: Creates a payment session via the configured provider (Mayar) and
+        returns the checkout URL.
+      parameters:
+      - description: Tenant ID
+        format: int64
+        in: header
+        name: X-Tenant-ID
+        required: true
+        type: integer
+      - description: Payment request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_payment.CreatePaymentBody'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Payment created
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_dengankarya_connector_internal_payment_domain.PaymentTransaction'
+              type: object
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/common.Response'
+        "409":
+          description: Duplicate idempotency key
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Create payment
+      tags:
+      - Payments
   /payments/{id}:
     get:
       description: Retrieves a payment transaction by its UUID for the authenticated

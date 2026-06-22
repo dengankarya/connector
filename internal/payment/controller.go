@@ -10,6 +10,7 @@ import (
 	"github.com/dengankarya/connector/common"
 	"github.com/dengankarya/connector/internal/payment/domain"
 	"github.com/dengankarya/connector/internal/payment/jobs"
+	"github.com/dengankarya/connector/internal/payment/provider"
 	paymentservice "github.com/dengankarya/connector/internal/payment/service"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
@@ -21,24 +22,122 @@ import (
 
 type paymentController struct {
 	svc      *paymentservice.PaymentService
+	provider provider.PaymentProvider // nil when no provider is configured
 	enqueuer *asynq.Client
 	logger   *logrus.Logger
 }
 
 // RegisterPaymentHandlers registers the payment transaction endpoints.
+// prov may be nil — the POST / (create payment) route is only registered when prov is non-nil.
 func RegisterPaymentHandlers(
 	mux fiber.Router,
 	svc *paymentservice.PaymentService,
+	prov provider.PaymentProvider,
 	enqueuer *asynq.Client,
 	logger *logrus.Logger,
 ) {
-	ctrl := &paymentController{svc: svc, enqueuer: enqueuer, logger: logger}
+	ctrl := &paymentController{svc: svc, provider: prov, enqueuer: enqueuer, logger: logger}
 	mux.Get("/transactions", ctrl.listTransactions)
 
 	mux.Post("/cancel-schedule", ctrl.scheduleOrderCancellation)
 	mux.Post("/manual", ctrl.createManualPayment)
 	mux.Post("/manual/:id/confirm", ctrl.confirmManualPayment)
 	mux.Get("/:id", ctrl.getPayment)
+
+	if prov != nil {
+		mux.Post("/", ctrl.createPayment)
+	}
+}
+
+// createPayment godoc
+//
+//	@Summary		Create payment
+//	@Description	Creates a payment session via the configured provider (Mayar) and returns the checkout URL.
+//	@Tags			Payments
+//	@Accept			json
+//	@Produce		json
+//	@Param			X-Tenant-ID	header		int64											true	"Tenant ID"
+//	@Param			body		body		CreatePaymentBody								true	"Payment request"
+//	@Success		201			{object}	common.Response{data=domain.PaymentTransaction}	"Payment created"
+//	@Failure		400			{object}	common.Response									"Invalid request"
+//	@Failure		409			{object}	common.Response									"Duplicate idempotency key"
+//	@Failure		500			{object}	common.Response									"Internal server error"
+//	@Security		ApiKeyAuth
+//	@Router			/payments [post]
+func (ctrl *paymentController) createPayment(c fiber.Ctx) error {
+	tenantID := mustParseIntHeader(c, "X-Tenant-ID")
+	if tenantID == 0 {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: "X-Tenant-ID header is required",
+		})
+	}
+
+	var body CreatePaymentBody
+	if err := c.Bind().JSON(&body); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: err.Error(),
+		})
+	}
+
+	if body.OrderNumber == "" {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: "order_number is required",
+		})
+	}
+	if body.Amount <= 0 {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: "amount must be greater than 0",
+		})
+	}
+	if body.Currency == "" {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: "currency is required",
+		})
+	}
+	if body.CustomerName == "" {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: "customer_name is required",
+		})
+	}
+	if body.CustomerEmail == "" {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: "customer_email is required",
+		})
+	}
+
+	txn, err := ctrl.svc.CreateProviderPayment(c.Context(), ctrl.provider, paymentservice.CreateProviderPaymentRequest{
+		TenantID:         tenantID,
+		OrderNumber:      body.OrderNumber,
+		IdempotencyKey:   body.IdempotencyKey,
+		Amount:           body.Amount,
+		Currency:         body.Currency,
+		PlatformFee:      body.PlatformFee,
+		ShippingFee:      body.ShippingFee,
+		CustomerName:     body.CustomerName,
+		CustomerEmail:    body.CustomerEmail,
+		CustomerMobile:   body.CustomerMobile,
+		Description:      body.Description,
+		SuccessReturnURL: body.SuccessReturnURL,
+		CancelReturnURL:  body.CancelReturnURL,
+		ExpiresAt:        body.ExpiresAt,
+		Metadata:         body.Metadata,
+	})
+	if err != nil {
+		if err == domain.ErrDuplicateIdempotencyKey {
+			return c.Status(http.StatusConflict).JSON(common.Response{
+				Status: "Conflict", Error: "a transaction with this idempotency_key already exists",
+			})
+		}
+		ctrl.logger.WithError(err).Error("create payment failed")
+		return c.Status(http.StatusInternalServerError).JSON(common.Response{
+			Status: "Internal Server Error", Error: err.Error(),
+		})
+	}
+
+	return c.Status(http.StatusCreated).JSON(common.Response{
+		Status: "Created",
+		Data:   txn,
+	})
 }
 
 // getPayment godoc
@@ -304,7 +403,7 @@ func (ctrl *paymentController) listTransactions(c fiber.Ctx) error {
 	limit, _ := strconv.Atoi(c.Query("limit", "20"))
 	cursor := c.Query("cursor")
 	paymentProvider := c.Query("provider")
-	if paymentProvider != "" && paymentProvider != "manual_transfer" {
+	if paymentProvider != "" && paymentProvider != "manual_transfer" && paymentProvider != "mayar" {
 		return c.Status(http.StatusBadRequest).JSON(common.Response{
 			Status: "Bad Request", Error: "invalid provider value",
 		})

@@ -34,6 +34,10 @@ const (
 	// AccountMerchantDirect — funds received directly by the merchant (cash, bank transfer)
 	// that never passed through platform escrow. Used only for manual payments.
 	AccountMerchantDirect LedgerAccountType = "merchant_direct"
+	// AccountProviderFee — payment processing fees charged by the external provider (e.g. Mayar).
+	// These are deducted from merchant_payable at settlement time once the provider reports
+	// the exact fee breakdown.
+	AccountProviderFee LedgerAccountType = "provider_fee"
 )
 
 // LedgerEntry is an immutable, append-only record of a single financial movement.

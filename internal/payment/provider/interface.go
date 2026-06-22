@@ -21,6 +21,7 @@ type CreateInvoiceRequest struct {
 	Description            string
 	CustomerEmail          string
 	CustomerName           string
+	CustomerMobile         string
 	CustomerReferenceID    string
 	ExpiresAt              *time.Time
 	Metadata               map[string]string

@@ -3,6 +3,7 @@ package webhook
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -21,6 +22,27 @@ type ShippingBalanceCreditor interface {
 	CreditFromPayment(ctx context.Context, tenantID int64, amount int64, currency string) error
 }
 
+// PaymentForwarder forwards a normalized payment status event to an upstream system
+// (e.g. Tokokarya) after the DB transaction commits. Called in a fire-and-forget goroutine.
+// tokokarya.Client satisfies this interface.
+type PaymentForwarder interface {
+	ForwardPaymentWebhook(ctx context.Context, payload []byte) error
+}
+
+// PaymentStatusEvent is the normalized payload forwarded to Tokokarya on every
+// payment state transition. Uses connector-internal IDs — no provider-specific fields.
+type PaymentStatusEvent struct {
+	Event         string     `json:"event"`          // "payment.paid" | "payment.expired" | "payment.failed"
+	TransactionID string     `json:"transaction_id"` // connector's internal UUID
+	OrderNumber   string     `json:"order_number"`
+	Status        string     `json:"status"`
+	Amount        int64      `json:"amount"`
+	Currency      string     `json:"currency"`
+	Provider      string     `json:"provider"`
+	CheckoutURL   string     `json:"checkout_url,omitempty"`
+	PaidAt        *time.Time `json:"paid_at,omitempty"`
+}
+
 // Processor orchestrates the full webhook processing pipeline.
 // Every step from lock → transition → ledger → mark-processed runs in one DB transaction.
 type Processor struct {
@@ -29,17 +51,19 @@ type Processor struct {
 	ledger           *ledger.Service
 	txRunner         *repository.TxRunner
 	shippingCreditor ShippingBalanceCreditor // optional; if nil shipping_fee credit is skipped
+	forwarder        PaymentForwarder        // optional; if nil Tokokarya forwarding is skipped
 	logger           *logrus.Logger
 }
 
 // NewProcessor creates a Processor with all required dependencies.
-// shippingCreditor may be nil — shipping balance credit is skipped when not configured.
+// shippingCreditor and forwarder may be nil.
 func NewProcessor(
 	eventRepo *repository.WebhookEventRepository,
 	txnRepo *repository.TransactionRepository,
 	ledgerSvc *ledger.Service,
 	txRunner *repository.TxRunner,
 	shippingCreditor ShippingBalanceCreditor,
+	forwarder PaymentForwarder,
 	logger *logrus.Logger,
 ) *Processor {
 	return &Processor{
@@ -48,6 +72,7 @@ func NewProcessor(
 		ledger:           ledgerSvc,
 		txRunner:         txRunner,
 		shippingCreditor: shippingCreditor,
+		forwarder:        forwarder,
 		logger:           logger,
 	}
 }
@@ -63,6 +88,8 @@ func (p *Processor) Process(ctx context.Context, eventID uuid.UUID) error {
 		"component":        "webhook_processor",
 		"webhook_event_id": eventID,
 	})
+
+	var txnSnapshot *domain.PaymentTransaction // captured inside tx, used for forwarding after commit
 
 	err := p.txRunner.RunInTx(ctx, func(txCtx context.Context) error {
 		// ── Step 1: Lock the webhook event row ──────────────────────────────
@@ -120,6 +147,7 @@ func (p *Processor) Process(ctx context.Context, eventID uuid.UUID) error {
 			return fmt.Errorf("mark processed: %w", err)
 		}
 
+		txnSnapshot = txn // capture for post-commit forwarding
 		log.WithField("duration_ms", time.Since(start).Milliseconds()).
 			Info("webhook event processed successfully")
 		return nil
@@ -128,7 +156,57 @@ func (p *Processor) Process(ctx context.Context, eventID uuid.UUID) error {
 		return err
 	}
 
+	// ── Post-commit: forward status to Tokokarya ────────────────────────────
+	// Fire-and-forget: Tokokarya unavailability must never fail payment processing.
+	if p.forwarder != nil && txnSnapshot != nil {
+		go p.forwardToTokokarya(context.Background(), txnSnapshot, log)
+	}
+
 	return nil
+}
+
+func (p *Processor) forwardToTokokarya(ctx context.Context, txn *domain.PaymentTransaction, log *logrus.Entry) {
+	event := paymentEventName(txn.Status)
+	if event == "" {
+		return // don't forward non-terminal intermediate states
+	}
+
+	evt := PaymentStatusEvent{
+		Event:         event,
+		TransactionID: txn.ID.String(),
+		OrderNumber:   txn.OrderNumber,
+		Status:        string(txn.Status),
+		Amount:        txn.Amount,
+		Currency:      txn.Currency,
+		Provider:      txn.Provider,
+		CheckoutURL:   txn.CheckoutURL,
+		PaidAt:        txn.PaidAt,
+	}
+
+	payload, err := json.Marshal(evt)
+	if err != nil {
+		log.WithError(err).Error("forward to tokokarya: marshal payload failed")
+		return
+	}
+
+	if err := p.forwarder.ForwardPaymentWebhook(ctx, payload); err != nil {
+		log.WithError(err).Warn("forward to tokokarya: delivery failed (non-fatal)")
+	} else {
+		log.WithField("event", event).Info("payment status forwarded to tokokarya")
+	}
+}
+
+func paymentEventName(status domain.PaymentStatus) string {
+	switch status {
+	case domain.StatusPaid:
+		return "payment.paid"
+	case domain.StatusExpired:
+		return "payment.expired"
+	case domain.StatusFailed:
+		return "payment.failed"
+	default:
+		return ""
+	}
 }
 
 func (p *Processor) handle(ctx context.Context, event *domain.WebhookEvent, txn *domain.PaymentTransaction, log *logrus.Entry) error {
@@ -273,8 +351,11 @@ func (p *Processor) handleFailed(ctx context.Context, _ *domain.WebhookEvent, tx
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 func extractInvoiceID(event *domain.WebhookEvent) string {
-	// Prefer extracting payment_session_id directly from the raw webhook payload —
-	// this is what we store as ProviderInvoiceID when the session is created.
+	if event.Provider == "mayar" {
+		return parseMayarTransactionID(event.RawPayload)
+	}
+
+	// Xendit path: prefer payment_session_id from raw payload.
 	details := parsePaymentDetails(event.RawPayload)
 	if details.PaymentSessionID != "" {
 		return details.PaymentSessionID

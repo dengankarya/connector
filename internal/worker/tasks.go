@@ -8,3 +8,6 @@ const TaskRetryWebhooks = "payment:jobs:retry_webhooks"
 
 // TaskCancelExpiredOrder is the one-shot job that calls Tokokarya to cancel a specific order at a scheduled time.
 const TaskCancelExpiredOrder = "payment:jobs:cancel_expired_order"
+
+// TaskSyncMayarSettlements polls Mayar for settled transactions and updates fee data.
+const TaskSyncMayarSettlements = "payment:jobs:sync_mayar_settlements"

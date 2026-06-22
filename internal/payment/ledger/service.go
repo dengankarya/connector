@@ -63,42 +63,112 @@ func (s *Service) RecordManualPayment(ctx context.Context, txn *domain.PaymentTr
 	return s.write(ctx, journal, txn.ID, "record_manual_payment")
 }
 
-// RecordSettlement creates ledger entries when a payment is settled (invoice.settlement).
+// RecordSettlement creates ledger entries when a payment is settled.
+// eventID is nil when settlement is detected via polling (no webhook event).
 //
-// Journal:
+// If the transaction has provider fees (XenditFee / XenditWithholdingTax), this also
+// writes a deduction entry so merchants can see exactly why their payable decreased:
 //
-//	DR  merchant_payable    merchant_amount (liability fulfilled)
-//	CR  merchant_payable    merchant_amount (re-classify as ready for payout)
+//	DR  merchant_payable    total_provider_fee   (fee deducted from merchant balance)
+//	CR  provider_fee        total_provider_fee   (cost of payment processing)
 //
-// In practice this is a no-op for the merchant_payable balance but provides
-// an audit trail that settlement has been confirmed by the provider.
-func (s *Service) RecordSettlement(ctx context.Context, txn *domain.PaymentTransaction, eventID uuid.UUID) error {
-	// Settlement just confirms that the funds are cleared; no balance change.
-	// We record an informational pair to mark the event in the audit log.
+// When there are no fees, a no-op audit pair is written to mark settlement in the log:
+//
+//	DR  merchant_payable    merchant_amount
+//	CR  merchant_payable    merchant_amount
+func (s *Service) RecordSettlement(ctx context.Context, txn *domain.PaymentTransaction, eventID *uuid.UUID) error {
 	ref := fmt.Sprintf("txn:%s:settled", txn.ID)
-	entry := domain.LedgerEntry{
-		TenantID:       txn.TenantID,
-		TransactionID:  txn.ID,
-		WebhookEventID: &eventID,
-		AccountType:    domain.AccountMerchantPayable,
-		Direction:      domain.DirectionDebit, // confirm payout obligation is cleared
-		Amount:         txn.MerchantAmount,
-		Currency:       txn.Currency,
-		ReferenceID:    ref + ":settled_debit",
-		Description:    "Settlement confirmed by provider",
+
+	totalProviderFee := txn.XenditFee + txn.XenditWithholdingTax
+
+	if totalProviderFee > 0 {
+		// Write separate entries for each fee type so merchants see the breakdown.
+		entries := []domain.LedgerEntry{}
+
+		if txn.XenditFee > 0 {
+			entries = append(entries,
+				domain.LedgerEntry{
+					TenantID:       txn.TenantID,
+					TransactionID:  txn.ID,
+					WebhookEventID: eventID,
+					AccountType:    domain.AccountMerchantPayable,
+					Direction:      domain.DirectionDebit,
+					Amount:         txn.XenditFee,
+					Currency:       txn.Currency,
+					ReferenceID:    ref + ":xendit_fee_debit",
+					Description:    "Payment gateway fee (Xendit)",
+				},
+				domain.LedgerEntry{
+					TenantID:       txn.TenantID,
+					TransactionID:  txn.ID,
+					WebhookEventID: eventID,
+					AccountType:    domain.AccountProviderFee,
+					Direction:      domain.DirectionCredit,
+					Amount:         txn.XenditFee,
+					Currency:       txn.Currency,
+					ReferenceID:    ref + ":xendit_fee_credit",
+					Description:    "Payment gateway fee (Xendit)",
+				},
+			)
+		}
+
+		if txn.XenditWithholdingTax > 0 {
+			entries = append(entries,
+				domain.LedgerEntry{
+					TenantID:       txn.TenantID,
+					TransactionID:  txn.ID,
+					WebhookEventID: eventID,
+					AccountType:    domain.AccountMerchantPayable,
+					Direction:      domain.DirectionDebit,
+					Amount:         txn.XenditWithholdingTax,
+					Currency:       txn.Currency,
+					ReferenceID:    ref + ":mayar_fee_debit",
+					Description:    "Platform fee (Mayar)",
+				},
+				domain.LedgerEntry{
+					TenantID:       txn.TenantID,
+					TransactionID:  txn.ID,
+					WebhookEventID: eventID,
+					AccountType:    domain.AccountProviderFee,
+					Direction:      domain.DirectionCredit,
+					Amount:         txn.XenditWithholdingTax,
+					Currency:       txn.Currency,
+					ReferenceID:    ref + ":mayar_fee_credit",
+					Description:    "Platform fee (Mayar)",
+				},
+			)
+		}
+
+		return s.write(ctx, &domain.LedgerJournal{Entries: entries}, txn.ID, "record_settlement")
 	}
-	entry2 := domain.LedgerEntry{
-		TenantID:       txn.TenantID,
-		TransactionID:  txn.ID,
-		WebhookEventID: &eventID,
-		AccountType:    domain.AccountMerchantPayable,
-		Direction:      domain.DirectionCredit,
-		Amount:         txn.MerchantAmount,
-		Currency:       txn.Currency,
-		ReferenceID:    ref + ":settled_credit",
-		Description:    "Settlement cleared — amount ready for payout",
+
+	// No fees known yet — write an informational audit pair.
+	journal := &domain.LedgerJournal{
+		Entries: []domain.LedgerEntry{
+			{
+				TenantID:       txn.TenantID,
+				TransactionID:  txn.ID,
+				WebhookEventID: eventID,
+				AccountType:    domain.AccountMerchantPayable,
+				Direction:      domain.DirectionDebit,
+				Amount:         txn.MerchantAmount,
+				Currency:       txn.Currency,
+				ReferenceID:    ref + ":settled_debit",
+				Description:    "Settlement confirmed by provider",
+			},
+			{
+				TenantID:       txn.TenantID,
+				TransactionID:  txn.ID,
+				WebhookEventID: eventID,
+				AccountType:    domain.AccountMerchantPayable,
+				Direction:      domain.DirectionCredit,
+				Amount:         txn.MerchantAmount,
+				Currency:       txn.Currency,
+				ReferenceID:    ref + ":settled_credit",
+				Description:    "Settlement cleared — amount ready for payout",
+			},
+		},
 	}
-	journal := &domain.LedgerJournal{Entries: []domain.LedgerEntry{entry, entry2}}
 	return s.write(ctx, journal, txn.ID, "record_settlement")
 }
 
