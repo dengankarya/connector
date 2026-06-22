@@ -142,7 +142,7 @@ func (p *Provider) CreateInvoice(ctx context.Context, req provider.CreateInvoice
 
 	resp, err := p.client.CreateInvoice(ctx, mayarReq)
 	if err != nil {
-		return nil, fmt.Errorf("mayar: create invoice: %w", err)
+		return nil, err
 	}
 
 	var expiresAt *time.Time
