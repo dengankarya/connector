@@ -4,6 +4,7 @@
 package account
 
 import (
+	"context"
 	"time"
 
 	"github.com/dengankarya/connector/common"
@@ -11,12 +12,15 @@ import (
 )
 
 var (
-	ErrNotFound            = common.NewDomainError("NF_TRANSACTION_NOT_FOUND", "transaction not found")
-	ErrInsufficientBalance = common.ErrInsufficientBalance // PR_INSUFFICIENT_BALANCE
-	ErrHoldNotFound        = common.NewDomainError("NF_HOLD_NOT_FOUND", "shipping hold not found")
-	ErrHoldAlreadyActioned = common.NewDomainError("CF_HOLD_ALREADY_ACTIONED", "shipping hold already confirmed or released")
-	ErrDuplicateHold       = common.NewDomainError("CF_DUPLICATE_HOLD", "an active hold already exists for this order")
-	ErrInvalidCursor       = common.NewDomainError("BR_INVALID_CURSOR", "invalid pagination cursor")
+	ErrNotFound               = common.NewDomainError("NF_TRANSACTION_NOT_FOUND", "transaction not found")
+	ErrInsufficientBalance    = common.ErrInsufficientBalance // PR_INSUFFICIENT_BALANCE
+	ErrHoldNotFound           = common.NewDomainError("NF_HOLD_NOT_FOUND", "shipping hold not found")
+	ErrHoldAlreadyActioned    = common.NewDomainError("CF_HOLD_ALREADY_ACTIONED", "shipping hold already confirmed or released")
+	ErrDuplicateHold          = common.NewDomainError("CF_DUPLICATE_HOLD", "an active hold already exists for this order")
+	ErrInvalidCursor          = common.NewDomainError("BR_INVALID_CURSOR", "invalid pagination cursor")
+	ErrGatewayAccountNotFound = common.NewDomainError("NF_GATEWAY_ACCOUNT_NOT_FOUND", "no gateway account found for this tenant")
+	ErrGatewayAccountExists   = common.NewDomainError("CF_GATEWAY_ACCOUNT_EXISTS", "a gateway account already exists for this tenant")
+	ErrGatewayNotConfigured   = common.NewDomainError("SV_GATEWAY_NOT_CONFIGURED", "payment gateway is not configured")
 )
 
 // TransactionFilter controls cursor-paginated listing of account activity.
@@ -139,16 +143,15 @@ type ShippingTopup struct {
 
 // MerchantPaymentBalance is the transaction-derived balance for a merchant's
 // payment settlements. All figures are computed from payment_transactions and
-// payment_payouts — no real-time Xendit API call is required.
+// payment_payouts in our DB — no real-time gateway API call is required.
 type MerchantPaymentBalance struct {
 	TenantID int64 `json:"tenant_id"`
 
 	// Settled is the total merchant_amount across all 'settled' transactions.
-	// Xendit has confirmed these funds landed in the platform master account.
 	Settled int64 `json:"settled"`
 
 	// PendingSettlement is merchant_amount across 'paid' transactions not yet
-	// confirmed as settled by Xendit (typically takes 1–3 business days).
+	// marked settled (typically T+1 or T+2 depending on the gateway).
 	PendingSettlement int64 `json:"pending_settlement"`
 
 	// PaidOut is the total amount already disbursed to the merchant via
@@ -164,12 +167,46 @@ type MerchantPaymentBalance struct {
 
 // UnifiedBalance is the combined merchant wallet view returned by GET /accounts/balance.
 // It merges the shipping wallet (available/on-hold) with the transaction-derived
-// payment settlement balance (settled/pending/paid-out).
+// payment settlement balance (settled/pending/paid-out), and the live gateway sub-account balance.
 type UnifiedBalance struct {
 	// Shipping wallet — available funds and funds on hold for pending shipments.
 	Shipping *ShippingBalance `json:"shipping"`
 	// Payment settlement — computed from payment_transactions and payment_payouts.
 	Payment *MerchantPaymentBalance `json:"payment"`
+	// Gateway is the real-time balance from the payment gateway sub-account.
+	// Nil when no gateway sub-account is configured for this tenant.
+	Gateway *GatewayBalance `json:"gateway,omitempty"`
+}
+
+// ─── Gateway account types ────────────────────────────────────────────────────
+
+// GatewayAccount is the stored record of a merchant's payment gateway sub-account.
+type GatewayAccount struct {
+	ID               uuid.UUID `json:"id"`
+	TenantID         int64     `json:"tenant_id"`
+	Gateway          string    `json:"gateway"`
+	GatewayAccountID string    `json:"gateway_account_id"`
+	Email            string    `json:"email"`
+	Name             string    `json:"name"`
+	Status           string    `json:"status"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+// GatewayBalance is the real-time balance reported by the payment gateway sub-account.
+type GatewayBalance struct {
+	GatewayAccountID string `json:"gateway_account_id"`
+	Pending          int64  `json:"pending"`
+	Available        int64  `json:"available"`
+	Currency         string `json:"currency"`
+}
+
+// GatewayClient is the interface for payment gateway sub-account operations.
+// Implemented structurally by *doku.Client.
+type GatewayClient interface {
+	CreateSubAccount(ctx context.Context, email, name string) (gatewayAccountID, status string, err error)
+	GetBalance(ctx context.Context, gatewayAccountID string) (pending, available int64, err error)
+	SendPayout(ctx context.Context, gatewayAccountID string, amount int64, invoiceNumber, bankCode, bankAccountNumber, bankAccountName string) (status string, err error)
 }
 
 // ─── Request body types (used by Swagger) ────────────────────────────────────
@@ -186,4 +223,19 @@ type CreateHoldBody struct {
 	OrderNumber string `json:"order_number" example:"ORD-001"`
 	Amount      int64  `json:"amount" example:"35000"`
 	Currency    string `json:"currency" example:"IDR"`
+}
+
+// CreateGatewaySubAccountBody is the request body for POST /accounts/gateway/sub-account.
+type CreateGatewaySubAccountBody struct {
+	Email string `json:"email" example:"toko-abc@example.com"`
+	Name  string `json:"name" example:"Toko ABC"`
+}
+
+// SendGatewayPayoutBody is the request body for POST /accounts/gateway/payout.
+type SendGatewayPayoutBody struct {
+	Amount            int64  `json:"amount" example:"100000"`
+	InvoiceNumber     string `json:"invoice_number" example:"INV/2026/001"`
+	BankCode          string `json:"bank_code" example:"BNINIDJA"`
+	BankAccountNumber string `json:"bank_account_number" example:"0123456789"`
+	BankAccountName   string `json:"bank_account_name" example:"Budi Santoso"`
 }

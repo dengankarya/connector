@@ -31,17 +31,34 @@ func RegisterIngestHandler(
 			"component": "webhook_ingest",
 			"provider":  prov.ProviderName(),
 			"route":     route,
+			"source_ip": c.IP(),
 		})
 
 		rawBody := c.Body()
 
-		// Collect relevant headers for audit log and signature validation.
+		// Collect all headers relevant to audit logging and signature validation.
+		// "Request-Target" carries the request path so providers can verify their
+		// HMAC signatures without needing the path baked into their configuration.
 		headers := map[string]string{
-			"Content-Type":     c.Get("Content-Type"),
+			"Content-Type":   c.Get("Content-Type"),
+			"Request-Target": c.Path(),
+			// Xendit headers
 			"X-Callback-Token": c.Get("X-Callback-Token"),
 			"X-Webhook-Token":  c.Get("X-Webhook-Token"),
 			"X-Request-ID":     c.Get("X-Request-ID"),
+			// DOKU Non-SNAP headers
+			"Client-Id":         c.Get("Client-Id"),
+			"Request-Id":        c.Get("Request-Id"),
+			"Request-Timestamp": c.Get("Request-Timestamp"),
+			"Signature":         c.Get("Signature"),
 		}
+
+		// Log every incoming webhook for debugging — best-effort, never blocks processing.
+		log.WithFields(logrus.Fields{
+			"body_size": len(rawBody),
+			"body":      string(rawBody),
+			"headers":   headers,
+		}).Info("webhook request received")
 
 		// Audit log — best-effort, never blocks processing.
 		if err := logRepo.Create(ctx, c.IP(), rawBody, headers); err != nil {
@@ -61,6 +78,12 @@ func RegisterIngestHandler(
 			log.WithError(err).Error("failed to parse webhook event")
 			return c.Status(http.StatusBadRequest).JSON(map[string]string{"status": "bad_request", "error": err.Error()})
 		}
+
+		log.WithFields(logrus.Fields{
+			"provider_event_id":   parsed.ProviderEventID,
+			"event_type":          parsed.EventType,
+			"provider_invoice_id": parsed.ProviderInvoiceID,
+		}).Info("webhook event parsed")
 
 		event := &domain.WebhookEvent{
 			Provider:         prov.ProviderName(),

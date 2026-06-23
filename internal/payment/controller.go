@@ -52,7 +52,7 @@ func RegisterPaymentHandlers(
 // createPayment godoc
 //
 //	@Summary		Create payment
-//	@Description	Creates a payment session via the configured provider (Mayar) and returns the checkout URL.
+//	@Description	Creates a payment session via the configured provider (DOKU Checkout) and returns the checkout URL.
 //	@Tags			Payments
 //	@Accept			json
 //	@Produce		json

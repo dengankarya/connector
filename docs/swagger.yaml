@@ -689,6 +689,15 @@ definitions:
     - ActivityShipmentConfirmed
     - ActivityShipmentReleased
     - ActivityShipmentPriceAdjustment
+  internal_account.CreateGatewaySubAccountBody:
+    properties:
+      email:
+        example: toko-abc@example.com
+        type: string
+      name:
+        example: Toko ABC
+        type: string
+    type: object
   internal_account.CreateHoldBody:
     properties:
       amount:
@@ -700,6 +709,38 @@ definitions:
       order_number:
         example: ORD-001
         type: string
+    type: object
+  internal_account.GatewayAccount:
+    properties:
+      created_at:
+        type: string
+      email:
+        type: string
+      gateway:
+        type: string
+      gateway_account_id:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      status:
+        type: string
+      tenant_id:
+        type: integer
+      updated_at:
+        type: string
+    type: object
+  internal_account.GatewayBalance:
+    properties:
+      available:
+        type: integer
+      currency:
+        type: string
+      gateway_account_id:
+        type: string
+      pending:
+        type: integer
     type: object
   internal_account.HoldStatus:
     enum:
@@ -743,15 +784,31 @@ definitions:
       pending_settlement:
         description: |-
           PendingSettlement is merchant_amount across 'paid' transactions not yet
-          confirmed as settled by Xendit (typically takes 1–3 business days).
+          marked settled (typically T+1 or T+2 depending on the gateway).
         type: integer
       settled:
-        description: |-
-          Settled is the total merchant_amount across all 'settled' transactions.
-          Xendit has confirmed these funds landed in the platform master account.
+        description: Settled is the total merchant_amount across all 'settled' transactions.
         type: integer
       tenant_id:
         type: integer
+    type: object
+  internal_account.SendGatewayPayoutBody:
+    properties:
+      amount:
+        example: 100000
+        type: integer
+      bank_account_name:
+        example: Budi Santoso
+        type: string
+      bank_account_number:
+        example: "0123456789"
+        type: string
+      bank_code:
+        example: BNINIDJA
+        type: string
+      invoice_number:
+        example: INV/2026/001
+        type: string
     type: object
   internal_account.ShippingBalance:
     properties:
@@ -820,6 +877,12 @@ definitions:
     type: object
   internal_account.UnifiedBalance:
     properties:
+      gateway:
+        allOf:
+        - $ref: '#/definitions/internal_account.GatewayBalance'
+        description: |-
+          Gateway is the real-time balance from the payment gateway sub-account.
+          Nil when no gateway sub-account is configured for this tenant.
       payment:
         allOf:
         - $ref: '#/definitions/internal_account.MerchantPaymentBalance'
@@ -923,9 +986,9 @@ info:
 paths:
   /accounts/balance:
     get:
-      description: 'Returns the merchant''s combined balance: shipping wallet (available/on-hold)
-        and payment settlement balance (settled/pending/paid-out). Both are computed
-        from local DB — no external API call.'
+      description: 'Returns the merchant''s combined balance: shipping wallet (available/on-hold),
+        payment settlement balance (settled/pending/paid-out), and live gateway balance
+        (available/pending) fetched from the tenant''s DOKU sub-account when configured.'
       parameters:
       - description: Tenant ID
         format: int64
@@ -1043,6 +1106,118 @@ paths:
       - ApiKeyAuth: []
       - AdminApiKeyAuth: []
       summary: Top up shipping balance (admin only)
+      tags:
+      - Account
+  /accounts/gateway/payout:
+    post:
+      consumes:
+      - application/json
+      description: Initiates a bank transfer payout from the tenant's Doku sub-account
+        to the specified bank account. Restricted to admin API keys.
+      parameters:
+      - description: Tenant ID
+        format: int64
+        in: header
+        name: X-Tenant-ID
+        required: true
+        type: integer
+      - description: Payout details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_account.SendGatewayPayoutBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Payout status
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  additionalProperties:
+                    type: string
+                  type: object
+              type: object
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: Forbidden — admin API key required
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: No gateway account for this tenant
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/common.Response'
+        "503":
+          description: Gateway not configured
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - ApiKeyAuth: []
+      - AdminApiKeyAuth: []
+      summary: Send payout via Doku (admin only)
+      tags:
+      - Account
+  /accounts/gateway/sub-account:
+    post:
+      consumes:
+      - application/json
+      description: Creates a Doku payment gateway sub-account for the tenant and stores
+        the account ID. Called by Tokokarya when onboarding a new merchant. Idempotent
+        — returns 409 if an account already exists for this tenant.
+      parameters:
+      - description: Tenant ID
+        format: int64
+        in: header
+        name: X-Tenant-ID
+        required: true
+        type: integer
+      - description: Sub-account details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_account.CreateGatewaySubAccountBody'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Sub-account created
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_account.GatewayAccount'
+              type: object
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/common.Response'
+        "409":
+          description: Gateway account already exists
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/common.Response'
+        "503":
+          description: Gateway not configured
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Provision Doku gateway sub-account
       tags:
       - Account
   /accounts/holds:
@@ -1388,8 +1563,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates a payment session via the configured provider (Mayar) and
-        returns the checkout URL.
+      description: Creates a payment session via the configured provider (DOKU Checkout)
+        and returns the checkout URL.
       parameters:
       - description: Tenant ID
         format: int64

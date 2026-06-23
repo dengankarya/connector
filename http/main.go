@@ -20,6 +20,7 @@ import (
 	"github.com/dengankarya/connector/internal/payment"
 	"github.com/dengankarya/connector/internal/payment/jobs"
 	"github.com/dengankarya/connector/internal/payment/ledger"
+	"github.com/dengankarya/connector/internal/payment/provider"
 	"github.com/dengankarya/connector/internal/payment/repository"
 	paymentservice "github.com/dengankarya/connector/internal/payment/service"
 	"github.com/dengankarya/connector/internal/payment/webhook"
@@ -29,6 +30,7 @@ import (
 	"github.com/dengankarya/connector/internal/worker"
 	"github.com/dengankarya/connector/pkg/biteship"
 	"github.com/dengankarya/connector/pkg/dbconn"
+	"github.com/dengankarya/connector/pkg/doku"
 	"github.com/dengankarya/connector/pkg/geoapify"
 	"github.com/dengankarya/connector/pkg/tokokarya"
 	"github.com/dengankarya/connector/pkg/wilayah"
@@ -78,21 +80,23 @@ func main() {
 
 	// ── PostgreSQL ──────────────────────────────────────────────────────────
 	var (
-		txnRepo                 *repository.TransactionRepository
-		eventRepo               *repository.WebhookEventRepository
-		ledgerRepo *repository.LedgerRepository
-		payoutRepo *repository.PayoutRepository
-		txRunner   *repository.TxRunner
-		ledgerSvc               *ledger.Service
-		webhookProc             *webhook.Processor
-		webhookHandler          *webhook.AsynqHandler
-		replaySvc               *webhook.ReplayService
-		paymentSvc              *paymentservice.PaymentService
-		expireJob               *jobs.ExpirePaymentsJob
+		txnRepo               *repository.TransactionRepository
+		eventRepo             *repository.WebhookEventRepository
+		webhookLogRepo        *repository.WebhookRequestLogRepository
+		ledgerRepo            *repository.LedgerRepository
+		payoutRepo            *repository.PayoutRepository
+		txRunner              *repository.TxRunner
+		ledgerSvc             *ledger.Service
+		webhookProc           *webhook.Processor
+		webhookHandler        *webhook.AsynqHandler
+		replaySvc             *webhook.ReplayService
+		paymentSvc            *paymentservice.PaymentService
+		expireJob             *jobs.ExpirePaymentsJob
 		retryJob              *jobs.RetryWebhooksJob
 		cancelExpiredOrderJob *jobs.CancelExpiredOrderJob
-		shipmentRepo            *shipmentrepo.ShipmentRepository
-		balanceSvc              *account.Service
+		shipmentRepo          *shipmentrepo.ShipmentRepository
+		balanceSvc            *account.Service
+		dokuClient            *doku.Client // shared: account gateway + payment provider
 	)
 
 	if cfg.DatabaseDSN != "" {
@@ -107,6 +111,7 @@ func main() {
 		// Repositories
 		txnRepo = repository.NewTransactionRepository(pool)
 		eventRepo = repository.NewWebhookEventRepository(pool)
+		webhookLogRepo = repository.NewWebhookRequestLogRepository(pool)
 		ledgerRepo = repository.NewLedgerRepository(pool)
 		payoutRepo = repository.NewPayoutRepository(pool)
 		txRunner = repository.NewTxRunner(pool)
@@ -115,7 +120,11 @@ func main() {
 
 		// Business layer
 		ledgerSvc = ledger.New(ledgerRepo, log.StandardLogger())
-		balanceSvc = account.NewService(balanceRepo, txRunner, log.StandardLogger())
+
+		if cfg.DokuClientID != "" {
+			dokuClient = doku.NewClient(cfg.DokuClientID, cfg.DokuSecretKey, cfg.DokuBaseURL)
+		}
+		balanceSvc = account.NewService(balanceRepo, txRunner, dokuClient, log.StandardLogger())
 
 		webhookProc = webhook.NewProcessor(eventRepo, txnRepo, ledgerSvc, txRunner, balanceSvc, tokokaryaClient, log.StandardLogger())
 		webhookHandler = webhook.NewAsynqHandler(webhookProc, log.StandardLogger())
@@ -197,6 +206,11 @@ func main() {
 	// ── Biteship webhook — public, no API key check ─────────────────────────
 	shipping.RegisterWebhookHandler(apiRootGroup, cfg.BiteshipWebhookSignatureKey, cfg.BiteshipWebhookSignatureValue, shipmentRepo, tokokaryaClient, balanceSvc, log.StandardLogger())
 
+	// ── DOKU payment webhook — public, no API key check ──────────────────────
+	if dokuClient != nil && eventRepo != nil {
+		webhook.RegisterIngestHandler(apiRootGroup, "/webhook/doku", dokuClient, eventRepo, webhookLogRepo, asynqClient, log.StandardLogger())
+	}
+
 	// ── Authenticated routes ─────────────────────────────────────────────────
 	app.Use(authenticatedRequest(cfg))
 
@@ -221,10 +235,16 @@ func main() {
 
 	// Payment module endpoints (requires DB).
 	if paymentSvc != nil {
+		// Convert *doku.Client to the interface explicitly so a nil pointer doesn't
+		// produce a non-nil interface value (which would wrongly enable POST /payments).
+		var paymentProv provider.PaymentProvider
+		if dokuClient != nil {
+			paymentProv = dokuClient
+		}
 		payment.RegisterPaymentHandlers(
 			apiRootGroup.Group("/payments"),
 			paymentSvc,
-			nil, // provider wired here once Doku is implemented
+			paymentProv,
 			asynqClient,
 			log.StandardLogger(),
 		)

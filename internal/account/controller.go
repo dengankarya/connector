@@ -21,20 +21,24 @@ var (
 	_ ShippingHold
 	_ MerchantPaymentBalance
 	_ UnifiedBalance
+	_ GatewayAccount
+	_ GatewayBalance
 )
 
 // RegisterHandlers mounts all account endpoints on mux.
-// adminOnly is applied to operator-only mutations (topup); pass adminRequest(cfg) from main.
+// adminOnly is applied to operator-only mutations (topup, payout); pass adminRequest(cfg) from main.
 //
-//	GET  /accounts/transactions          unified activity feed
-//	GET  /accounts/transactions/:id      detail with ledger entries
-//	GET  /accounts/balance               unified balance (shipping + payment gateway)
-//	POST /accounts/balance/topup         credit available balance  [admin only]
-//	GET  /accounts/balance/payments      transaction-derived payment settlement balance
-//	GET  /accounts/holds                 list holds
-//	POST /accounts/holds                 create a hold for a draft order
-//	POST /accounts/holds/:id/confirm     confirm shipment, disburse hold
-//	POST /accounts/holds/:id/release     cancel order, return hold to available
+//	GET  /accounts/transactions               unified activity feed
+//	GET  /accounts/transactions/:id           detail with ledger entries
+//	GET  /accounts/balance                    unified balance (shipping + payment + gateway)
+//	POST /accounts/balance/topup              credit available balance  [admin only]
+//	GET  /accounts/balance/payments           transaction-derived payment settlement balance
+//	GET  /accounts/holds                      list holds
+//	POST /accounts/holds                      create a hold for a draft order
+//	POST /accounts/holds/:id/confirm          confirm shipment, disburse hold
+//	POST /accounts/holds/:id/release          cancel order, return hold to available
+//	POST /accounts/gateway/sub-account        provision Doku sub-account for tenant
+//	POST /accounts/gateway/payout             send payout via Doku  [admin only]
 func RegisterHandlers(mux fiber.Router, svc *Service, adminOnly fiber.Handler) {
 	ctrl := &controller{svc: svc}
 
@@ -47,6 +51,8 @@ func RegisterHandlers(mux fiber.Router, svc *Service, adminOnly fiber.Handler) {
 	mux.Post("/holds", ctrl.createHold)
 	mux.Post("/holds/:id/confirm", ctrl.confirmHold)
 	mux.Post("/holds/:id/release", ctrl.releaseHold)
+	mux.Post("/gateway/sub-account", ctrl.createGatewaySubAccount)
+	mux.Post("/gateway/payout", adminOnly, ctrl.sendGatewayPayout)
 }
 
 type controller struct {
@@ -194,7 +200,7 @@ func (ctrl *controller) getPaymentBalance(c fiber.Ctx) error {
 // getBalance godoc
 //
 //	@Summary		Get unified balance
-//	@Description	Returns the merchant's combined balance: shipping wallet (available/on-hold) and payment settlement balance (settled/pending/paid-out). Both are computed from local DB — no external API call.
+//	@Description	Returns the merchant's combined balance: shipping wallet (available/on-hold), payment settlement balance (settled/pending/paid-out), and live gateway balance (available/pending) fetched from the tenant's DOKU sub-account when configured.
 //	@Tags			Account
 //	@Produce		json
 //	@Param			X-Tenant-ID	header		int64											true	"Tenant ID"
@@ -396,6 +402,130 @@ func (ctrl *controller) releaseHold(c fiber.Ctx) error {
 		return holdActionError(c, err)
 	}
 	return c.JSON(common.Response{Status: "OK", Data: hold})
+}
+
+// ─── Gateway ──────────────────────────────────────────────────────────────────
+
+// createGatewaySubAccount godoc
+//
+//	@Summary		Provision Doku gateway sub-account
+//	@Description	Creates a Doku payment gateway sub-account for the tenant and stores the account ID. Called by Tokokarya when onboarding a new merchant. Idempotent — returns 409 if an account already exists for this tenant.
+//	@Tags			Account
+//	@Accept			json
+//	@Produce		json
+//	@Param			X-Tenant-ID	header		int64											true	"Tenant ID"
+//	@Param			body		body		account.CreateGatewaySubAccountBody				true	"Sub-account details"
+//	@Success		201			{object}	common.Response{data=account.GatewayAccount}	"Sub-account created"
+//	@Failure		400			{object}	common.Response									"Invalid request"
+//	@Failure		409			{object}	common.Response									"Gateway account already exists"
+//	@Failure		503			{object}	common.Response									"Gateway not configured"
+//	@Failure		500			{object}	common.Response									"Internal server error"
+//	@Security		ApiKeyAuth
+//	@Router			/accounts/gateway/sub-account [post]
+func (ctrl *controller) createGatewaySubAccount(c fiber.Ctx) error {
+	tenantID := mustParseTenantID(c)
+	if tenantID == 0 {
+		return badRequest(c, "X-Tenant-ID header is required")
+	}
+
+	var body CreateGatewaySubAccountBody
+	if err := c.Bind().JSON(&body); err != nil {
+		return badRequest(c, err.Error())
+	}
+	if body.Email == "" {
+		return badRequest(c, "email is required")
+	}
+	if body.Name == "" {
+		return badRequest(c, "name is required")
+	}
+
+	acct, err := ctrl.svc.CreateGatewaySubAccount(c.Context(), CreateGatewaySubAccountRequest{
+		TenantID: tenantID,
+		Email:    body.Email,
+		Name:     body.Name,
+	})
+	if err != nil {
+		if errors.Is(err, ErrGatewayNotConfigured) {
+			return c.Status(http.StatusServiceUnavailable).JSON(common.Response{
+				Status: "Service Unavailable", Error: err.Error(),
+			})
+		}
+		if errors.Is(err, ErrGatewayAccountExists) {
+			return c.Status(http.StatusConflict).JSON(common.Response{
+				Status: "Conflict", Error: err.Error(),
+			})
+		}
+		return internalError(c, err)
+	}
+	return c.Status(http.StatusCreated).JSON(common.Response{Status: "Created", Data: acct})
+}
+
+// sendGatewayPayout godoc
+//
+//	@Summary		Send payout via Doku (admin only)
+//	@Description	Initiates a bank transfer payout from the tenant's Doku sub-account to the specified bank account. Restricted to admin API keys.
+//	@Tags			Account
+//	@Accept			json
+//	@Produce		json
+//	@Param			X-Tenant-ID	header		int64									true	"Tenant ID"
+//	@Param			body		body		account.SendGatewayPayoutBody			true	"Payout details"
+//	@Success		200			{object}	common.Response{data=map[string]string}	"Payout status"
+//	@Failure		400			{object}	common.Response							"Invalid request"
+//	@Failure		403			{object}	common.Response							"Forbidden — admin API key required"
+//	@Failure		404			{object}	common.Response							"No gateway account for this tenant"
+//	@Failure		503			{object}	common.Response							"Gateway not configured"
+//	@Failure		500			{object}	common.Response							"Internal server error"
+//	@Security		ApiKeyAuth
+//	@Security		AdminApiKeyAuth
+//	@Router			/accounts/gateway/payout [post]
+func (ctrl *controller) sendGatewayPayout(c fiber.Ctx) error {
+	tenantID := mustParseTenantID(c)
+	if tenantID == 0 {
+		return badRequest(c, "X-Tenant-ID header is required")
+	}
+
+	var body SendGatewayPayoutBody
+	if err := c.Bind().JSON(&body); err != nil {
+		return badRequest(c, err.Error())
+	}
+	if body.Amount <= 0 {
+		return badRequest(c, "amount must be greater than 0")
+	}
+	if body.InvoiceNumber == "" {
+		return badRequest(c, "invoice_number is required")
+	}
+	if body.BankCode == "" {
+		return badRequest(c, "bank_code is required")
+	}
+	if body.BankAccountNumber == "" {
+		return badRequest(c, "bank_account_number is required")
+	}
+	if body.BankAccountName == "" {
+		return badRequest(c, "bank_account_name is required")
+	}
+
+	status, err := ctrl.svc.SendGatewayPayout(c.Context(), SendGatewayPayoutRequest{
+		TenantID:          tenantID,
+		Amount:            body.Amount,
+		InvoiceNumber:     body.InvoiceNumber,
+		BankCode:          body.BankCode,
+		BankAccountNumber: body.BankAccountNumber,
+		BankAccountName:   body.BankAccountName,
+	})
+	if err != nil {
+		if errors.Is(err, ErrGatewayNotConfigured) {
+			return c.Status(http.StatusServiceUnavailable).JSON(common.Response{
+				Status: "Service Unavailable", Error: err.Error(),
+			})
+		}
+		if errors.Is(err, ErrGatewayAccountNotFound) {
+			return c.Status(http.StatusNotFound).JSON(common.Response{
+				Status: "Not Found", Error: err.Error(),
+			})
+		}
+		return internalError(c, err)
+	}
+	return c.JSON(common.Response{Status: "OK", Data: map[string]string{"status": status}})
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────

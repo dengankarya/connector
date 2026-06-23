@@ -32,7 +32,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Returns the merchant's combined balance: shipping wallet (available/on-hold) and payment settlement balance (settled/pending/paid-out). Both are computed from local DB — no external API call.",
+                "description": "Returns the merchant's combined balance: shipping wallet (available/on-hold), payment settlement balance (settled/pending/paid-out), and live gateway balance (available/pending) fetched from the tenant's DOKU sub-account when configured.",
                 "produces": [
                     "application/json"
                 ],
@@ -216,6 +216,184 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/accounts/gateway/payout": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "AdminApiKeyAuth": []
+                    }
+                ],
+                "description": "Initiates a bank transfer payout from the tenant's Doku sub-account to the specified bank account. Restricted to admin API keys.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Send payout via Doku (admin only)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "Tenant ID",
+                        "name": "X-Tenant-ID",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Payout details",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_account.SendGatewayPayoutBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payout status",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — admin API key required",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "No gateway account for this tenant",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "503": {
+                        "description": "Gateway not configured",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/accounts/gateway/sub-account": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Creates a Doku payment gateway sub-account for the tenant and stores the account ID. Called by Tokokarya when onboarding a new merchant. Idempotent — returns 409 if an account already exists for this tenant.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Provision Doku gateway sub-account",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "Tenant ID",
+                        "name": "X-Tenant-ID",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Sub-account details",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_account.CreateGatewaySubAccountBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Sub-account created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/internal_account.GatewayAccount"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "Gateway account already exists",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "503": {
+                        "description": "Gateway not configured",
                         "schema": {
                             "$ref": "#/definitions/common.Response"
                         }
@@ -760,7 +938,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Creates a payment session via the configured provider (Mayar) and returns the checkout URL.",
+                "description": "Creates a payment session via the configured provider (DOKU Checkout) and returns the checkout URL.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2830,6 +3008,19 @@ const docTemplate = `{
                 "ActivityShipmentPriceAdjustment"
             ]
         },
+        "internal_account.CreateGatewaySubAccountBody": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "example": "toko-abc@example.com"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Toko ABC"
+                }
+            }
+        },
         "internal_account.CreateHoldBody": {
             "type": "object",
             "properties": {
@@ -2844,6 +3035,55 @@ const docTemplate = `{
                 "order_number": {
                     "type": "string",
                     "example": "ORD-001"
+                }
+            }
+        },
+        "internal_account.GatewayAccount": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "gateway": {
+                    "type": "string"
+                },
+                "gateway_account_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "tenant_id": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_account.GatewayBalance": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "type": "integer"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "gateway_account_id": {
+                    "type": "string"
+                },
+                "pending": {
+                    "type": "integer"
                 }
             }
         },
@@ -2898,15 +3138,40 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "pending_settlement": {
-                    "description": "PendingSettlement is merchant_amount across 'paid' transactions not yet\nconfirmed as settled by Xendit (typically takes 1–3 business days).",
+                    "description": "PendingSettlement is merchant_amount across 'paid' transactions not yet\nmarked settled (typically T+1 or T+2 depending on the gateway).",
                     "type": "integer"
                 },
                 "settled": {
-                    "description": "Settled is the total merchant_amount across all 'settled' transactions.\nXendit has confirmed these funds landed in the platform master account.",
+                    "description": "Settled is the total merchant_amount across all 'settled' transactions.",
                     "type": "integer"
                 },
                 "tenant_id": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_account.SendGatewayPayoutBody": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer",
+                    "example": 100000
+                },
+                "bank_account_name": {
+                    "type": "string",
+                    "example": "Budi Santoso"
+                },
+                "bank_account_number": {
+                    "type": "string",
+                    "example": "0123456789"
+                },
+                "bank_code": {
+                    "type": "string",
+                    "example": "BNINIDJA"
+                },
+                "invoice_number": {
+                    "type": "string",
+                    "example": "INV/2026/001"
                 }
             }
         },
@@ -3011,6 +3276,14 @@ const docTemplate = `{
         "internal_account.UnifiedBalance": {
             "type": "object",
             "properties": {
+                "gateway": {
+                    "description": "Gateway is the real-time balance from the payment gateway sub-account.\nNil when no gateway sub-account is configured for this tenant.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_account.GatewayBalance"
+                        }
+                    ]
+                },
                 "payment": {
                     "description": "Payment settlement — computed from payment_transactions and payment_payouts.",
                     "allOf": [

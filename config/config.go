@@ -32,6 +32,9 @@ type Configuration struct {
 	GeoapifyAPIKey  string `env:"GEOAPIFY_API_KEY"`
 	GeoapifyBaseURL string `env:"GEOAPIFY_BASE_URL"`
 
+	DokuClientID  string `env:"DOKU_CLIENT_ID"`
+	DokuSecretKey string `env:"DOKU_SECRET_KEY"`
+	DokuBaseURL   string `env:"DOKU_BASE_URL" envDefault:"https://api-sandbox.doku.com"`
 }
 
 func (c Configuration) IsThisRequestAuthenticated(apiKey string) bool {

@@ -601,6 +601,51 @@ func (r *Repository) CreatePriceAdjustment(ctx context.Context, adj *ShippingPri
 	return nil
 }
 
+// ─── Gateway accounts ─────────────────────────────────────────────────────────
+
+// CreateGatewayAccount inserts a new merchant gateway sub-account record.
+// Returns ErrGatewayAccountExists when the (tenant_id, gateway) pair already exists.
+func (r *Repository) CreateGatewayAccount(ctx context.Context, a *GatewayAccount) error {
+	if a.ID == uuid.Nil {
+		a.ID = uuid.New()
+	}
+	a.CreatedAt = time.Now().UTC()
+	a.UpdatedAt = a.CreatedAt
+
+	_, err := dbFromContext(ctx, r.pool).Exec(ctx, `
+		INSERT INTO merchant_gateway_accounts
+		    (id, tenant_id, gateway, gateway_account_id, email, name, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		a.ID, a.TenantID, a.Gateway, a.GatewayAccountID, a.Email, a.Name, a.Status, a.CreatedAt, a.UpdatedAt)
+	if err != nil {
+		if isDuplicateKeyError(err) {
+			return ErrGatewayAccountExists
+		}
+		return fmt.Errorf("insert merchant_gateway_accounts: %w", err)
+	}
+	return nil
+}
+
+// GetGatewayAccountByTenantID returns the gateway sub-account for the given tenant and gateway name.
+// Returns ErrGatewayAccountNotFound when no account exists.
+func (r *Repository) GetGatewayAccountByTenantID(ctx context.Context, tenantID int64, gateway string) (*GatewayAccount, error) {
+	row := dbFromContext(ctx, r.pool).QueryRow(ctx, `
+		SELECT id::text, tenant_id, gateway, gateway_account_id, email, name, status, created_at, updated_at
+		FROM merchant_gateway_accounts
+		WHERE tenant_id = $1 AND gateway = $2`, tenantID, gateway)
+
+	var a GatewayAccount
+	var idStr string
+	if err := row.Scan(&idStr, &a.TenantID, &a.Gateway, &a.GatewayAccountID, &a.Email, &a.Name, &a.Status, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrGatewayAccountNotFound
+		}
+		return nil, fmt.Errorf("get merchant_gateway_accounts: %w", err)
+	}
+	a.ID, _ = uuid.Parse(idStr)
+	return &a, nil
+}
+
 // ─── Topups ───────────────────────────────────────────────────────────────────
 
 func (r *Repository) CreateTopup(ctx context.Context, t *ShippingTopup) error {
