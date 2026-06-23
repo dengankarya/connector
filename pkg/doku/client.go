@@ -215,7 +215,7 @@ func (c *Client) CreateCheckout(ctx context.Context, req CheckoutRequest) (*Chec
 		"account_id":          req.AccountID,
 		"has_additional_info": req.AccountID != "",
 		"request_body":        string(bodyJSON),
-	}).Debug("DOKU CreateCheckout request")
+	}).Info("DOKU CreateCheckout request")
 
 	var resp respBody
 	if err := c.post(ctx, "/checkout/v1/payment", body, &resp); err != nil {
