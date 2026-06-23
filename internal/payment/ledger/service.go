@@ -96,7 +96,7 @@ func (s *Service) RecordSettlement(ctx context.Context, txn *domain.PaymentTrans
 					Amount:         txn.XenditFee,
 					Currency:       txn.Currency,
 					ReferenceID:    ref + ":xendit_fee_debit",
-					Description:    "Payment gateway fee (Xendit)",
+					Description:    "Payment gateway fee",
 				},
 				domain.LedgerEntry{
 					TenantID:       txn.TenantID,
@@ -107,7 +107,7 @@ func (s *Service) RecordSettlement(ctx context.Context, txn *domain.PaymentTrans
 					Amount:         txn.XenditFee,
 					Currency:       txn.Currency,
 					ReferenceID:    ref + ":xendit_fee_credit",
-					Description:    "Payment gateway fee (Xendit)",
+					Description:    "Payment gateway fee",
 				},
 			)
 		}
@@ -123,7 +123,7 @@ func (s *Service) RecordSettlement(ctx context.Context, txn *domain.PaymentTrans
 					Amount:         txn.XenditWithholdingTax,
 					Currency:       txn.Currency,
 					ReferenceID:    ref + ":mayar_fee_debit",
-					Description:    "Platform fee (Mayar)",
+					Description:    "Provider platform fee",
 				},
 				domain.LedgerEntry{
 					TenantID:       txn.TenantID,
@@ -134,7 +134,7 @@ func (s *Service) RecordSettlement(ctx context.Context, txn *domain.PaymentTrans
 					Amount:         txn.XenditWithholdingTax,
 					Currency:       txn.Currency,
 					ReferenceID:    ref + ":mayar_fee_credit",
-					Description:    "Platform fee (Mayar)",
+					Description:    "Provider platform fee",
 				},
 			)
 		}

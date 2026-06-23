@@ -32,9 +32,6 @@ type Configuration struct {
 	GeoapifyAPIKey  string `env:"GEOAPIFY_API_KEY"`
 	GeoapifyBaseURL string `env:"GEOAPIFY_BASE_URL"`
 
-	MayarAPIKey        string `env:"MAYAR_API_KEY"`
-	MayarBaseURL       string `env:"MAYAR_BASE_URL" envDefault:"https://api.mayar.id"`
-	MayarCallbackToken string `env:"MAYAR_CALLBACK_TOKEN"`
 }
 
 func (c Configuration) IsThisRequestAuthenticated(apiKey string) bool {

@@ -403,7 +403,7 @@ func (ctrl *paymentController) listTransactions(c fiber.Ctx) error {
 	limit, _ := strconv.Atoi(c.Query("limit", "20"))
 	cursor := c.Query("cursor")
 	paymentProvider := c.Query("provider")
-	if paymentProvider != "" && paymentProvider != "manual_transfer" && paymentProvider != "mayar" {
+	if paymentProvider != "" && paymentProvider != "manual_transfer" {
 		return c.Status(http.StatusBadRequest).JSON(common.Response{
 			Status: "Bad Request", Error: "invalid provider value",
 		})

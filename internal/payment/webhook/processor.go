@@ -351,11 +351,7 @@ func (p *Processor) handleFailed(ctx context.Context, _ *domain.WebhookEvent, tx
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 func extractInvoiceID(event *domain.WebhookEvent) string {
-	if event.Provider == "mayar" {
-		return parseMayarTransactionID(event.RawPayload)
-	}
-
-	// Xendit path: prefer payment_session_id from raw payload.
+	// Prefer payment_session_id from raw payload.
 	details := parsePaymentDetails(event.RawPayload)
 	if details.PaymentSessionID != "" {
 		return details.PaymentSessionID
