@@ -18,6 +18,11 @@ type CreatePaymentBody struct {
 	CustomerMobile   string            `json:"customer_mobile"`
 	ExpiresAt        *time.Time        `json:"expires_at"`
 	Metadata         map[string]string `json:"metadata"`
+	// PaymentType is the DOKU transaction type: "SALE" (default), "INSTALLMENT", or "AUTHORIZE".
+	PaymentType string `json:"payment_type"`
+	// PaymentMethodTypes restricts which channels appear on the DOKU checkout page.
+	// When empty, DOKU shows all available methods.
+	PaymentMethodTypes []string `json:"payment_method_types"`
 }
 
 // CreateManualPaymentBody is the request body for POST /payments/manual.

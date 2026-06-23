@@ -131,28 +131,45 @@ type CheckoutResult struct {
 	ExpiredDate string // raw "yyyyMMddHHmmss" string in UTC+7 (WIB)
 }
 
+// CheckoutRequest is the input for CreateCheckout.
+type CheckoutRequest struct {
+	InvoiceNumber      string
+	Amount             int64
+	DueMinutes         int // 0 = DOKU default (60 min)
+	CustomerName       string
+	CustomerEmail      string
+	CustomerPhone      string
+	AccountID          string   // SAC sub-account ID; omitted when empty
+	PaymentType        string   // "SALE" (default) | "INSTALLMENT" | "AUTHORIZE"
+	PaymentMethodTypes []string // restrict channels; omitted when empty = show all
+}
+
 // CreateCheckout calls POST /checkout/v1/payment and returns the checkout session.
-// dueMins controls how long the checkout link stays valid (0 lets DOKU use its default of 60 min).
-// accountID is the SAC sub-account ID (e.g. "SAC-0000-..."); pass empty string when not applicable.
-func (c *Client) CreateCheckout(ctx context.Context, invoiceNumber string, amount int64, dueMins int, customerName, customerEmail, customerPhone, accountID string) (*CheckoutResult, error) {
+func (c *Client) CreateCheckout(ctx context.Context, req CheckoutRequest) (*CheckoutResult, error) {
+	type orderObj struct {
+		Amount        int64  `json:"amount"`
+		InvoiceNumber string `json:"invoice_number"`
+	}
+	type paymentObj struct {
+		PaymentDueDate     int      `json:"payment_due_date,omitempty"`
+		Type               string   `json:"type,omitempty"`
+		PaymentMethodTypes []string `json:"payment_method_types,omitempty"`
+	}
+	type customerObj struct {
+		Name  string `json:"name,omitempty"`
+		Email string `json:"email,omitempty"`
+		Phone string `json:"phone,omitempty"`
+	}
+	type additionalInfoObj struct {
+		Account struct {
+			ID string `json:"id"`
+		} `json:"account"`
+	}
 	type reqBody struct {
-		Order struct {
-			Amount        int64  `json:"amount"`
-			InvoiceNumber string `json:"invoice_number"`
-		} `json:"order"`
-		Payment struct {
-			PaymentDueDate int `json:"payment_due_date,omitempty"`
-		} `json:"payment"`
-		Customer struct {
-			Name  string `json:"name,omitempty"`
-			Email string `json:"email,omitempty"`
-			Phone string `json:"phone,omitempty"`
-		} `json:"customer"`
-		AdditionalInfo *struct {
-			Account struct {
-				ID string `json:"id"`
-			} `json:"account"`
-		} `json:"additional_info,omitempty"`
+		Order          orderObj           `json:"order"`
+		Payment        paymentObj         `json:"payment"`
+		Customer       customerObj        `json:"customer"`
+		AdditionalInfo *additionalInfoObj `json:"additional_info,omitempty"`
 	}
 	type respBody struct {
 		Response struct {
@@ -166,24 +183,22 @@ func (c *Client) CreateCheckout(ctx context.Context, invoiceNumber string, amoun
 		} `json:"response"`
 	}
 
-	var req reqBody
-	req.Order.Amount = amount
-	req.Order.InvoiceNumber = invoiceNumber
-	req.Payment.PaymentDueDate = dueMins
-	req.Customer.Name = customerName
-	req.Customer.Email = customerEmail
-	req.Customer.Phone = customerPhone
-	if accountID != "" {
-		req.AdditionalInfo = &struct {
-			Account struct {
-				ID string `json:"id"`
-			} `json:"account"`
-		}{}
-		req.AdditionalInfo.Account.ID = accountID
+	body := reqBody{
+		Order: orderObj{Amount: req.Amount, InvoiceNumber: req.InvoiceNumber},
+		Payment: paymentObj{
+			PaymentDueDate:     req.DueMinutes,
+			Type:               req.PaymentType,
+			PaymentMethodTypes: req.PaymentMethodTypes,
+		},
+		Customer: customerObj{Name: req.CustomerName, Email: req.CustomerEmail, Phone: req.CustomerPhone},
+	}
+	if req.AccountID != "" {
+		body.AdditionalInfo = &additionalInfoObj{}
+		body.AdditionalInfo.Account.ID = req.AccountID
 	}
 
 	var resp respBody
-	if err := c.post(ctx, "/checkout/v1/payment", req, &resp); err != nil {
+	if err := c.post(ctx, "/checkout/v1/payment", body, &resp); err != nil {
 		return nil, fmt.Errorf("doku: create checkout: %w", err)
 	}
 	return &CheckoutResult{

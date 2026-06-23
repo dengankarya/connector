@@ -949,6 +949,17 @@ definitions:
         type: object
       order_number:
         type: string
+      payment_method_types:
+        description: |-
+          PaymentMethodTypes restricts which channels appear on the DOKU checkout page.
+          When empty, DOKU shows all available methods.
+        items:
+          type: string
+        type: array
+      payment_type:
+        description: 'PaymentType is the DOKU transaction type: "SALE" (default),
+          "INSTALLMENT", or "AUTHORIZE".'
+        type: string
       platform_fee:
         type: integer
       shipping_fee:

@@ -34,15 +34,17 @@ func (c *Client) CreateInvoice(ctx context.Context, req provider.CreateInvoiceRe
 		invoiceNumber = invoiceNumber[:64]
 	}
 
-	result, err := c.CreateCheckout(ctx,
-		invoiceNumber,
-		req.Amount,
-		dueMins,
-		req.CustomerName,
-		req.CustomerEmail,
-		req.CustomerMobile,
-		req.GatewayAccountID,
-	)
+	result, err := c.CreateCheckout(ctx, CheckoutRequest{
+		InvoiceNumber:      invoiceNumber,
+		Amount:             req.Amount,
+		DueMinutes:         dueMins,
+		CustomerName:       req.CustomerName,
+		CustomerEmail:      req.CustomerEmail,
+		CustomerPhone:      req.CustomerMobile,
+		AccountID:          req.GatewayAccountID,
+		PaymentType:        req.PaymentType,
+		PaymentMethodTypes: req.PaymentMethodTypes,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("doku checkout: %w", err)
 	}

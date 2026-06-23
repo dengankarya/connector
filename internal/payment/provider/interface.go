@@ -29,6 +29,11 @@ type CreateInvoiceRequest struct {
 	// For DOKU this is the SAC account ID (e.g. "SAC-0000-..."), sent as
 	// additional_info.account.id. Empty when the tenant has no sub-account.
 	GatewayAccountID string
+	// PaymentType is the transaction type: "SALE" (default), "INSTALLMENT", or "AUTHORIZE".
+	PaymentType string
+	// PaymentMethodTypes restricts which payment channels appear on the checkout page.
+	// When empty, the provider shows all available methods.
+	PaymentMethodTypes []string
 }
 
 // Invoice is a provider-agnostic invoice response.

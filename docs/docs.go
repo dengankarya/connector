@@ -3387,6 +3387,17 @@ const docTemplate = `{
                 "order_number": {
                     "type": "string"
                 },
+                "payment_method_types": {
+                    "description": "PaymentMethodTypes restricts which channels appear on the DOKU checkout page.\nWhen empty, DOKU shows all available methods.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "payment_type": {
+                    "description": "PaymentType is the DOKU transaction type: \"SALE\" (default), \"INSTALLMENT\", or \"AUTHORIZE\".",
+                    "type": "string"
+                },
                 "platform_fee": {
                     "type": "integer"
                 },

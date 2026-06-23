@@ -39,7 +39,7 @@ type PaymentService struct {
 	ledger           *ledger.Service
 	txRunner         *repository.TxRunner
 	shippingCreditor ShippingBalanceCreditor // optional; nil = skip
-	gatewayFinder    GatewayAccountFinder   // optional; nil = skip sub-account lookup
+	gatewayFinder    GatewayAccountFinder    // optional; nil = skip sub-account lookup
 	logger           *logrus.Logger
 }
 
@@ -252,21 +252,23 @@ func (s *PaymentService) ConfirmManualPayment(ctx context.Context, req ConfirmMa
 
 // CreateProviderPaymentRequest is the input for creating a payment via an external provider.
 type CreateProviderPaymentRequest struct {
-	TenantID         int64
-	OrderNumber      string
-	IdempotencyKey   string
-	Amount           int64
-	Currency         string
-	PlatformFee      int64
-	ShippingFee      int64
-	CustomerName     string
-	CustomerEmail    string
-	CustomerMobile   string
-	Description      string
-	SuccessReturnURL string
-	CancelReturnURL  string
-	ExpiresAt        *time.Time
-	Metadata         map[string]string
+	TenantID           int64
+	OrderNumber        string
+	IdempotencyKey     string
+	Amount             int64
+	Currency           string
+	PlatformFee        int64
+	ShippingFee        int64
+	CustomerName       string
+	CustomerEmail      string
+	CustomerMobile     string
+	Description        string
+	SuccessReturnURL   string
+	CancelReturnURL    string
+	ExpiresAt          *time.Time
+	Metadata           map[string]string
+	PaymentType        string
+	PaymentMethodTypes []string
 }
 
 // CreateProviderPayment creates a payment session at the given provider and persists
@@ -299,18 +301,20 @@ func (s *PaymentService) CreateProviderPayment(ctx context.Context, prov provide
 	}
 
 	invoice, err := prov.CreateInvoice(ctx, provider.CreateInvoiceRequest{
-		ExternalID:       req.IdempotencyKey,
-		Amount:           req.Amount,
-		Currency:         req.Currency,
-		Description:      req.Description,
-		CustomerName:     req.CustomerName,
-		CustomerEmail:    req.CustomerEmail,
-		CustomerMobile:   req.CustomerMobile,
-		SuccessReturnURL: req.SuccessReturnURL,
-		CancelReturnURL:  req.CancelReturnURL,
-		ExpiresAt:        req.ExpiresAt,
-		Metadata:         req.Metadata,
-		GatewayAccountID: gatewayAccountID,
+		ExternalID:         req.IdempotencyKey,
+		Amount:             req.Amount,
+		Currency:           req.Currency,
+		Description:        req.Description,
+		CustomerName:       req.CustomerName,
+		CustomerEmail:      req.CustomerEmail,
+		CustomerMobile:     req.CustomerMobile,
+		SuccessReturnURL:   req.SuccessReturnURL,
+		CancelReturnURL:    req.CancelReturnURL,
+		ExpiresAt:          req.ExpiresAt,
+		Metadata:           req.Metadata,
+		GatewayAccountID:   gatewayAccountID,
+		PaymentType:        req.PaymentType,
+		PaymentMethodTypes: req.PaymentMethodTypes,
 	})
 	if err != nil {
 		log.WithError(err).Error("create provider payment: create invoice failed")

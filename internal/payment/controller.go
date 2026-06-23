@@ -106,21 +106,23 @@ func (ctrl *paymentController) createPayment(c fiber.Ctx) error {
 	}
 
 	txn, err := ctrl.svc.CreateProviderPayment(c.Context(), ctrl.provider, paymentservice.CreateProviderPaymentRequest{
-		TenantID:         tenantID,
-		OrderNumber:      body.OrderNumber,
-		IdempotencyKey:   body.IdempotencyKey,
-		Amount:           body.Amount,
-		Currency:         body.Currency,
-		PlatformFee:      body.PlatformFee,
-		ShippingFee:      body.ShippingFee,
-		CustomerName:     body.CustomerName,
-		CustomerEmail:    body.CustomerEmail,
-		CustomerMobile:   body.CustomerMobile,
-		Description:      body.Description,
-		SuccessReturnURL: body.SuccessReturnURL,
-		CancelReturnURL:  body.CancelReturnURL,
-		ExpiresAt:        body.ExpiresAt,
-		Metadata:         body.Metadata,
+		TenantID:           tenantID,
+		OrderNumber:        body.OrderNumber,
+		IdempotencyKey:     body.IdempotencyKey,
+		Amount:             body.Amount,
+		Currency:           body.Currency,
+		PlatformFee:        body.PlatformFee,
+		ShippingFee:        body.ShippingFee,
+		CustomerName:       body.CustomerName,
+		CustomerEmail:      body.CustomerEmail,
+		CustomerMobile:     body.CustomerMobile,
+		Description:        body.Description,
+		SuccessReturnURL:   body.SuccessReturnURL,
+		CancelReturnURL:    body.CancelReturnURL,
+		ExpiresAt:          body.ExpiresAt,
+		Metadata:           body.Metadata,
+		PaymentType:        body.PaymentType,
+		PaymentMethodTypes: body.PaymentMethodTypes,
 	})
 	if err != nil {
 		if err == domain.ErrDuplicateIdempotencyKey {
