@@ -153,60 +153,7 @@ type CheckoutRequest struct {
 
 // CreateCheckout calls POST /checkout/v1/payment and returns the checkout session.
 func (c *Client) CreateCheckout(ctx context.Context, req CheckoutRequest) (*CheckoutResult, error) {
-	type orderObj struct {
-		Amount        int64  `json:"amount"`
-		InvoiceNumber string `json:"invoice_number"`
-	}
-	type paymentObj struct {
-		PaymentDueDate     int      `json:"payment_due_date,omitempty"`
-		Type               string   `json:"type,omitempty"`
-		PaymentMethodTypes []string `json:"payment_method_types,omitempty"`
-	}
-	type customerObj struct {
-		Name  string `json:"name,omitempty"`
-		Email string `json:"email,omitempty"`
-		Phone string `json:"phone,omitempty"`
-	}
-	type additionalInfoObj struct {
-		Account struct {
-			ID string `json:"id"`
-		} `json:"account"`
-	}
-	type reqBody struct {
-		Order          orderObj           `json:"order"`
-		Payment        paymentObj         `json:"payment"`
-		Customer       customerObj        `json:"customer"`
-		AdditionalInfo *additionalInfoObj `json:"additional_info,omitempty"`
-	}
-	type respBody struct {
-		Response struct {
-			Payment struct {
-				URL         string `json:"url"`
-				ExpiredDate string `json:"expired_date"`
-			} `json:"payment"`
-			Order struct {
-				SessionID string `json:"session_id"`
-			} `json:"order"`
-		} `json:"response"`
-	}
-
-	body := reqBody{
-		Order: orderObj{Amount: req.Amount, InvoiceNumber: req.InvoiceNumber},
-		Payment: paymentObj{
-			PaymentDueDate:     req.DueMinutes,
-			Type:               req.PaymentType,
-			PaymentMethodTypes: req.PaymentMethodTypes,
-		},
-		Customer: customerObj{Name: req.CustomerName, Email: req.CustomerEmail, Phone: req.CustomerPhone},
-	}
-	if req.AccountID != "" {
-		body.AdditionalInfo = &additionalInfoObj{
-			Account: struct {
-				ID string `json:"id"`
-			}{ID: req.AccountID},
-		}
-	}
-
+	body := mapCheckoutRequest(req)
 	bodyJSON, _ := json.Marshal(body)
 	c.logger.WithFields(logrus.Fields{
 		"method":              "CreateCheckout",
@@ -217,7 +164,7 @@ func (c *Client) CreateCheckout(ctx context.Context, req CheckoutRequest) (*Chec
 		"request_body":        string(bodyJSON),
 	}).Info("DOKU CreateCheckout request")
 
-	var resp respBody
+	var resp DokuCreateCheckoutResponse
 	if err := c.post(ctx, "/checkout/v1/payment", body, &resp); err != nil {
 		return nil, fmt.Errorf("doku: create checkout: %w", err)
 	}
