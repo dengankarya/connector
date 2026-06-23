@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/sirupsen/logrus"
 )
 
 // Client is a thin HTTP client for the Doku Sub-Account (SAC) API.
@@ -19,16 +20,22 @@ type Client struct {
 	secretKey string
 	baseURL   string
 	http      *http.Client
+	logger    *logrus.Logger
 }
 
 // NewClient creates a Doku API client.
 // baseURL: "https://api.doku.com" (production) or "https://api-sandbox.doku.com" (sandbox).
-func NewClient(clientID, secretKey, baseURL string) *Client {
+// If logger is nil, a default logger is used.
+func NewClient(clientID, secretKey, baseURL string, logger *logrus.Logger) *Client {
+	if logger == nil {
+		logger = logrus.New()
+	}
 	return &Client{
 		clientID:  clientID,
 		secretKey: secretKey,
 		baseURL:   baseURL,
 		http:      &http.Client{Timeout: 30 * time.Second},
+		logger:    logger,
 	}
 }
 
@@ -193,9 +200,22 @@ func (c *Client) CreateCheckout(ctx context.Context, req CheckoutRequest) (*Chec
 		Customer: customerObj{Name: req.CustomerName, Email: req.CustomerEmail, Phone: req.CustomerPhone},
 	}
 	if req.AccountID != "" {
-		body.AdditionalInfo = &additionalInfoObj{}
-		body.AdditionalInfo.Account.ID = req.AccountID
+		body.AdditionalInfo = &additionalInfoObj{
+			Account: struct {
+				ID string `json:"id"`
+			}{ID: req.AccountID},
+		}
 	}
+
+	bodyJSON, _ := json.Marshal(body)
+	c.logger.WithFields(logrus.Fields{
+		"method":              "CreateCheckout",
+		"invoice_number":      req.InvoiceNumber,
+		"amount":              req.Amount,
+		"account_id":          req.AccountID,
+		"has_additional_info": req.AccountID != "",
+		"request_body":        string(bodyJSON),
+	}).Debug("DOKU CreateCheckout request")
 
 	var resp respBody
 	if err := c.post(ctx, "/checkout/v1/payment", body, &resp); err != nil {
