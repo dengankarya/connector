@@ -41,6 +41,7 @@ func (c *Client) CreateInvoice(ctx context.Context, req provider.CreateInvoiceRe
 		req.CustomerName,
 		req.CustomerEmail,
 		req.CustomerMobile,
+		req.GatewayAccountID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("doku checkout: %w", err)

@@ -27,22 +27,30 @@ type ShippingBalanceCreditor interface {
 	CreditFromPayment(ctx context.Context, tenantID int64, amount int64, currency string) error
 }
 
+// GatewayAccountFinder resolves a tenant's payment gateway sub-account ID.
+// account.Service satisfies this interface.
+type GatewayAccountFinder interface {
+	GetGatewayAccountIDForTenant(ctx context.Context, tenantID int64) (string, error)
+}
+
 // PaymentService handles payment creation and querying.
 type PaymentService struct {
 	txnRepo          *repository.TransactionRepository
 	ledger           *ledger.Service
 	txRunner         *repository.TxRunner
 	shippingCreditor ShippingBalanceCreditor // optional; nil = skip
+	gatewayFinder    GatewayAccountFinder   // optional; nil = skip sub-account lookup
 	logger           *logrus.Logger
 }
 
 // NewPaymentService creates a PaymentService.
-// shippingCreditor may be nil — shipping balance credit is skipped when not configured.
+// shippingCreditor and gatewayFinder may be nil.
 func NewPaymentService(
 	txnRepo *repository.TransactionRepository,
 	txRunner *repository.TxRunner,
 	ledgerSvc *ledger.Service,
 	shippingCreditor ShippingBalanceCreditor,
+	gatewayFinder GatewayAccountFinder,
 	logger *logrus.Logger,
 ) *PaymentService {
 	return &PaymentService{
@@ -50,6 +58,7 @@ func NewPaymentService(
 		ledger:           ledgerSvc,
 		txRunner:         txRunner,
 		shippingCreditor: shippingCreditor,
+		gatewayFinder:    gatewayFinder,
 		logger:           logger,
 	}
 }
@@ -282,6 +291,13 @@ func (s *PaymentService) CreateProviderPayment(ctx context.Context, prov provide
 		return nil, fmt.Errorf("platform_fee (%d) + shipping_fee (%d) exceeds amount (%d)", req.PlatformFee, req.ShippingFee, req.Amount)
 	}
 
+	var gatewayAccountID string
+	if s.gatewayFinder != nil {
+		if id, err := s.gatewayFinder.GetGatewayAccountIDForTenant(ctx, req.TenantID); err == nil {
+			gatewayAccountID = id
+		}
+	}
+
 	invoice, err := prov.CreateInvoice(ctx, provider.CreateInvoiceRequest{
 		ExternalID:       req.IdempotencyKey,
 		Amount:           req.Amount,
@@ -294,6 +310,7 @@ func (s *PaymentService) CreateProviderPayment(ctx context.Context, prov provide
 		CancelReturnURL:  req.CancelReturnURL,
 		ExpiresAt:        req.ExpiresAt,
 		Metadata:         req.Metadata,
+		GatewayAccountID: gatewayAccountID,
 	})
 	if err != nil {
 		log.WithError(err).Error("create provider payment: create invoice failed")

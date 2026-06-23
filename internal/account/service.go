@@ -116,6 +116,16 @@ func (s *Service) GetPaymentBalance(ctx context.Context, tenantID int64) (*Merch
 	return s.repo.GetPaymentBalance(ctx, tenantID)
 }
 
+// GetGatewayAccountIDForTenant returns the DOKU sub-account ID for the given tenant.
+// Returns an empty string (not an error) when no sub-account has been provisioned.
+func (s *Service) GetGatewayAccountIDForTenant(ctx context.Context, tenantID int64) (string, error) {
+	acct, err := s.repo.GetGatewayAccountByTenantID(ctx, tenantID, "doku")
+	if err != nil {
+		return "", err
+	}
+	return acct.GatewayAccountID, nil
+}
+
 // GetUnifiedBalance returns the combined shipping wallet, payment settlement balance,
 // and (when a gateway sub-account exists) the live gateway balance from Doku.
 // The gateway balance fetch is best-effort — failures are logged and omitted, not surfaced.

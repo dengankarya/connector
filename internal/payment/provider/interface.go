@@ -25,6 +25,10 @@ type CreateInvoiceRequest struct {
 	CustomerReferenceID    string
 	ExpiresAt              *time.Time
 	Metadata               map[string]string
+	// GatewayAccountID is the provider sub-account ID to associate this payment with.
+	// For DOKU this is the SAC account ID (e.g. "SAC-0000-..."), sent as
+	// additional_info.account.id. Empty when the tenant has no sub-account.
+	GatewayAccountID string
 }
 
 // Invoice is a provider-agnostic invoice response.

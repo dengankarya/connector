@@ -132,7 +132,7 @@ func main() {
 		// Asynq client needed for ReplayService — created before the section below.
 		_ = payoutRepo // used by PayoutService; wired separately if needed
 
-		paymentSvc = paymentservice.NewPaymentService(txnRepo, txRunner, ledgerSvc, balanceSvc, log.StandardLogger())
+		paymentSvc = paymentservice.NewPaymentService(txnRepo, txRunner, ledgerSvc, balanceSvc, balanceSvc, log.StandardLogger())
 
 		// Jobs
 		expireJob = jobs.NewExpirePaymentsJob(txnRepo, txRunner, log.StandardLogger())

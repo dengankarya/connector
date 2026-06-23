@@ -133,7 +133,8 @@ type CheckoutResult struct {
 
 // CreateCheckout calls POST /checkout/v1/payment and returns the checkout session.
 // dueMins controls how long the checkout link stays valid (0 lets DOKU use its default of 60 min).
-func (c *Client) CreateCheckout(ctx context.Context, invoiceNumber string, amount int64, dueMins int, customerName, customerEmail, customerPhone string) (*CheckoutResult, error) {
+// accountID is the SAC sub-account ID (e.g. "SAC-0000-..."); pass empty string when not applicable.
+func (c *Client) CreateCheckout(ctx context.Context, invoiceNumber string, amount int64, dueMins int, customerName, customerEmail, customerPhone, accountID string) (*CheckoutResult, error) {
 	type reqBody struct {
 		Order struct {
 			Amount        int64  `json:"amount"`
@@ -147,6 +148,11 @@ func (c *Client) CreateCheckout(ctx context.Context, invoiceNumber string, amoun
 			Email string `json:"email,omitempty"`
 			Phone string `json:"phone,omitempty"`
 		} `json:"customer"`
+		AdditionalInfo *struct {
+			Account struct {
+				ID string `json:"id"`
+			} `json:"account"`
+		} `json:"additional_info,omitempty"`
 	}
 	type respBody struct {
 		Response struct {
@@ -167,6 +173,14 @@ func (c *Client) CreateCheckout(ctx context.Context, invoiceNumber string, amoun
 	req.Customer.Name = customerName
 	req.Customer.Email = customerEmail
 	req.Customer.Phone = customerPhone
+	if accountID != "" {
+		req.AdditionalInfo = &struct {
+			Account struct {
+				ID string `json:"id"`
+			} `json:"account"`
+		}{}
+		req.AdditionalInfo.Account.ID = accountID
+	}
 
 	var resp respBody
 	if err := c.post(ctx, "/checkout/v1/payment", req, &resp); err != nil {
