@@ -140,15 +140,19 @@ type CheckoutResult struct {
 
 // CheckoutRequest is the input for CreateCheckout.
 type CheckoutRequest struct {
-	InvoiceNumber      string
-	Amount             int64
-	DueMinutes         int // 0 = DOKU default (60 min)
-	CustomerName       string
-	CustomerEmail      string
-	CustomerPhone      string
-	AccountID          string   // SAC sub-account ID; omitted when empty
-	PaymentType        string   // "SALE" (default) | "INSTALLMENT" | "AUTHORIZE"
-	PaymentMethodTypes []string // restrict channels; omitted when empty = show all
+	InvoiceNumber           string
+	Amount                  int64
+	DueMinutes              int // 0 = DOKU default (60 min)
+	CustomerName            string
+	CustomerEmail           string
+	CustomerPhone           string
+	AccountID               string   // SAC sub-account ID; omitted when empty
+	PaymentType             string   // "SALE" (default) | "INSTALLMENT" | "AUTHORIZE"
+	PaymentMethodTypes      []string // restrict channels; omitted when empty = show all
+	OverrideNotificationURL string   // webhook URL for payment status; omitted when empty
+	CallbackURL             string   // post-payment redirect URL; omitted when empty
+	CallbackURLCancel       string   // cancel redirect URL; omitted when empty
+	CallbackURLResult       string   // result page URL; omitted when empty
 }
 
 // CreateCheckout calls POST /checkout/v1/payment and returns the checkout session.
@@ -156,12 +160,16 @@ func (c *Client) CreateCheckout(ctx context.Context, req CheckoutRequest) (*Chec
 	body := mapCheckoutRequest(req)
 	bodyJSON, _ := json.Marshal(body)
 	c.logger.WithFields(logrus.Fields{
-		"method":              "CreateCheckout",
-		"invoice_number":      req.InvoiceNumber,
-		"amount":              req.Amount,
-		"account_id":          req.AccountID,
-		"has_additional_info": req.AccountID != "",
-		"request_body":        string(bodyJSON),
+		"method":                    "CreateCheckout",
+		"invoice_number":            req.InvoiceNumber,
+		"amount":                    req.Amount,
+		"account_id":                req.AccountID,
+		"has_additional_info":       req.AccountID != "",
+		"override_notification_url": req.OverrideNotificationURL,
+		"callback_url":              req.CallbackURL,
+		"callback_url_cancel":       req.CallbackURLCancel,
+		"callback_url_result":       req.CallbackURLResult,
+		"request_body":              string(bodyJSON),
 	}).Info("DOKU CreateCheckout request")
 
 	var resp DokuCreateCheckoutResponse

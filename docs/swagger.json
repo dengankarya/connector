@@ -3385,23 +3385,29 @@
                     "type": "string"
                 },
                 "payment_method_types": {
-                    "description": "PaymentMethodTypes restricts which channels appear on the DOKU checkout page.\nWhen empty, DOKU shows all available methods.",
                     "type": "array",
                     "items": {
                         "type": "string"
                     }
                 },
                 "payment_type": {
-                    "description": "PaymentType is the DOKU transaction type: \"SALE\" (default), \"INSTALLMENT\", or \"AUTHORIZE\".",
                     "type": "string"
                 },
                 "platform_fee": {
                     "type": "integer"
                 },
+                "result_url": {
+                    "description": "result page URL for DOKU",
+                    "type": "string"
+                },
                 "shipping_fee": {
                     "type": "integer"
                 },
                 "success_return_url": {
+                    "type": "string"
+                },
+                "webhook_notification_url": {
+                    "description": "override webhook URL",
                     "type": "string"
                 }
             }

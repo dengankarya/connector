@@ -35,6 +35,8 @@ type Configuration struct {
 	DokuClientID  string `env:"DOKU_CLIENT_ID"`
 	DokuSecretKey string `env:"DOKU_SECRET_KEY"`
 	DokuBaseURL   string `env:"DOKU_BASE_URL" envDefault:"https://api-sandbox.doku.com"`
+
+	WebhookBaseURL string `env:"WEBHOOK_BASE_URL"` // base URL for webhook notifications (e.g. https://connector.example.com)
 }
 
 func (c Configuration) IsThisRequestAuthenticated(apiKey string) bool {

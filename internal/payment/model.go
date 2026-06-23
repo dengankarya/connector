@@ -4,25 +4,24 @@ import "time"
 
 // CreatePaymentBody is the request body for POST /payments.
 type CreatePaymentBody struct {
-	OrderNumber      string            `json:"order_number"`
-	IdempotencyKey   string            `json:"idempotency_key"`
-	Amount           int64             `json:"amount"`
-	Currency         string            `json:"currency"`
-	PlatformFee      int64             `json:"platform_fee"`
-	ShippingFee      int64             `json:"shipping_fee"`
-	SuccessReturnURL string            `json:"success_return_url"`
-	CancelReturnURL  string            `json:"cancel_return_url"`
-	Description      string            `json:"description"`
-	CustomerName     string            `json:"customer_name"`
-	CustomerEmail    string            `json:"customer_email"`
-	CustomerMobile   string            `json:"customer_mobile"`
-	ExpiresAt        *time.Time        `json:"expires_at"`
-	Metadata         map[string]string `json:"metadata"`
-	// PaymentType is the DOKU transaction type: "SALE" (default), "INSTALLMENT", or "AUTHORIZE".
-	PaymentType string `json:"payment_type"`
-	// PaymentMethodTypes restricts which channels appear on the DOKU checkout page.
-	// When empty, DOKU shows all available methods.
-	PaymentMethodTypes []string `json:"payment_method_types"`
+	OrderNumber            string            `json:"order_number"`
+	IdempotencyKey         string            `json:"idempotency_key"`
+	Amount                 int64             `json:"amount"`
+	Currency               string            `json:"currency"`
+	PlatformFee            int64             `json:"platform_fee"`
+	ShippingFee            int64             `json:"shipping_fee"`
+	SuccessReturnURL       string            `json:"success_return_url"`
+	CancelReturnURL        string            `json:"cancel_return_url"`
+	Description            string            `json:"description"`
+	CustomerName           string            `json:"customer_name"`
+	CustomerEmail          string            `json:"customer_email"`
+	CustomerMobile         string            `json:"customer_mobile"`
+	ExpiresAt              *time.Time        `json:"expires_at"`
+	Metadata               map[string]string `json:"metadata"`
+	PaymentType            string            `json:"payment_type"`
+	PaymentMethodTypes     []string          `json:"payment_method_types"`
+	WebhookNotificationURL string            `json:"webhook_notification_url"` // override webhook URL
+	ResultURL              string            `json:"result_url"`               // result page URL for DOKU
 }
 
 // CreateManualPaymentBody is the request body for POST /payments/manual.

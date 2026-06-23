@@ -2,10 +2,14 @@ package doku
 
 type (
 	DokuCreateCheckoutRequest struct {
-		Order          DokuOrder      `json:"order"`
-		Payment        DokuPayment    `json:"payment"`
-		Customer       DokuCustomer   `json:"customer"`
-		AdditionalInfo map[string]any `json:"additional_info"`
+		Order                   DokuOrder      `json:"order"`
+		Payment                 DokuPayment    `json:"payment"`
+		Customer                DokuCustomer   `json:"customer"`
+		AdditionalInfo          map[string]any `json:"additional_info"`
+		OverrideNotificationURL string         `json:"override_notification_url,omitempty"`
+		CallbackURL             string         `json:"callback_url,omitempty"`
+		CallbackURLCancel       string         `json:"callback_url_cancel,omitempty"`
+		CallbackURLResult       string         `json:"callback_url_result,omitempty"`
 	}
 
 	DokuOrder struct {
@@ -42,7 +46,11 @@ func mapCheckoutRequest(req CheckoutRequest) DokuCreateCheckoutRequest {
 			Email: req.CustomerEmail,
 			Phone: req.CustomerPhone,
 		},
-		AdditionalInfo: map[string]any{},
+		AdditionalInfo:          map[string]any{},
+		OverrideNotificationURL: req.OverrideNotificationURL,
+		CallbackURL:             req.CallbackURL,
+		CallbackURLCancel:       req.CallbackURLCancel,
+		CallbackURLResult:       req.CallbackURLResult,
 	}
 
 	if req.AccountID != "" {
