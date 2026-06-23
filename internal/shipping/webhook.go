@@ -34,6 +34,8 @@ type ShipmentWebhookPayload struct {
 	TrackingNumber string    `json:"tracking_number,omitempty"`
 	TrackingURL    string    `json:"tracking_url,omitempty"`
 	ShippingCost   int64     `json:"shipping_cost,omitempty"`
+	OldPrice       int64     `json:"old_price,omitempty"` // for order.price events
+	PriceDiff      int64     `json:"price_diff,omitempty"` // new_price - old_price
 	Event          string    `json:"event"` // "order.status" | "order.price" | "order.waybill_id"
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -112,8 +114,9 @@ func (ctrl *webhookController) handleWebhook(c fiber.Ctx) error {
 
 	// Process event, update DB, and get the updated shipment back.
 	var updated *domain.Shipment
+	var oldPrice int64 // Track old price for price adjustment events
 	if ctrl.repo != nil {
-		updated, err = ctrl.processEvent(c.Context(), eventType, body)
+		updated, oldPrice, err = ctrl.processEventWithOldPrice(c.Context(), eventType, body)
 		if err != nil {
 			ctrl.logger.WithError(err).WithField("event", eventType).Error("failed to process biteship webhook")
 		}
@@ -122,7 +125,7 @@ func (ctrl *webhookController) handleWebhook(c fiber.Ctx) error {
 	// Forward normalized payload to Tokokarya (fire-and-forget).
 	// Only forward when we successfully found and updated the shipment.
 	if ctrl.forwarder != nil && updated != nil {
-		payload, merr := buildForwardPayload(updated, eventType)
+		payload, merr := buildForwardPayload(updated, eventType, oldPrice)
 		if merr != nil {
 			ctrl.logger.WithError(merr).Error("failed to build biteship forward payload")
 		} else {
@@ -154,6 +157,17 @@ func (ctrl *webhookController) processEvent(ctx context.Context, eventType strin
 	default:
 		return nil, nil // unknown event types are ignored
 	}
+}
+
+// processEventWithOldPrice is like processEvent but also returns the old shipping cost
+// (used for price adjustment events to show merchants the difference).
+func (ctrl *webhookController) processEventWithOldPrice(ctx context.Context, eventType string, body []byte) (*domain.Shipment, int64, error) {
+	if eventType == "order.price" {
+		return ctrl.handleOrderPriceWithOldPrice(ctx, body)
+	}
+	// For other events, call regular processEvent
+	s, err := ctrl.processEvent(ctx, eventType, body)
+	return s, 0, err
 }
 
 // orderStatusEvent is the payload for the order.status webhook.
@@ -253,14 +267,19 @@ func (ctrl *webhookController) handleOrderStatus(ctx context.Context, body []byt
 }
 
 func (ctrl *webhookController) handleOrderPrice(ctx context.Context, body []byte) (*domain.Shipment, error) {
+	s, _, err := ctrl.handleOrderPriceWithOldPrice(ctx, body)
+	return s, err
+}
+
+func (ctrl *webhookController) handleOrderPriceWithOldPrice(ctx context.Context, body []byte) (*domain.Shipment, int64, error) {
 	var evt orderPriceEvent
 	if err := json.Unmarshal(body, &evt); err != nil {
-		return nil, fmt.Errorf("unmarshal order.price: %w", err)
+		return nil, 0, fmt.Errorf("unmarshal order.price: %w", err)
 	}
 
 	s, err := ctrl.findShipment(ctx, evt.OrderID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	oldPrice := s.ShippingCost
@@ -273,11 +292,12 @@ func (ctrl *webhookController) handleOrderPrice(ctx context.Context, body []byte
 	}
 
 	if err := ctrl.repo.Update(ctx, s); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	// Only deduct when the actual price is higher than what was recorded — webhooks must never
-	// add to the merchant's balance. Also skip for draft shipments (no balance consumed yet).
+	// Auto-deduct price difference from merchant balance if price increased.
+	// Biteship has already charged the customer, so we need to reconcile the merchant's balance.
+	// Only deduct when price increased and shipment is confirmed (not draft).
 	if ctrl.holds != nil && evt.Price > oldPrice && s.Status != domain.ShipmentStatusDraft {
 		if err := ctrl.holds.AdjustShippingBalance(ctx, s.TenantID, oldPrice, evt.Price, "IDR", s.OrderNumber); err != nil {
 			ctrl.logger.WithError(err).WithFields(log.Fields{
@@ -289,7 +309,7 @@ func (ctrl *webhookController) handleOrderPrice(ctx context.Context, body []byte
 		}
 	}
 
-	return s, nil
+	return s, oldPrice, nil
 }
 
 func (ctrl *webhookController) handleOrderWaybillID(ctx context.Context, body []byte) (*domain.Shipment, error) {
@@ -342,7 +362,8 @@ func (ctrl *webhookController) findShipment(ctx context.Context, orderID string)
 
 // buildForwardPayload builds the normalized payload sent to Tokokarya.
 // It uses our internal IDs and mapped statuses — no Biteship-specific identifiers.
-func buildForwardPayload(s *domain.Shipment, eventType string) ([]byte, error) {
+// For price adjustment events, it includes the old price and diff so FE can show merchant the change.
+func buildForwardPayload(s *domain.Shipment, eventType string, oldPrice int64) ([]byte, error) {
 	p := ShipmentWebhookPayload{
 		ShipmentID:     s.ID.String(),
 		OrderNumber:    s.OrderNumber,
@@ -353,6 +374,13 @@ func buildForwardPayload(s *domain.Shipment, eventType string) ([]byte, error) {
 		Event:          eventType,
 		UpdatedAt:      s.UpdatedAt,
 	}
+
+	// For price adjustment events, include the old price and diff so FE can show merchant.
+	if eventType == "order.price" && oldPrice > 0 && oldPrice != s.ShippingCost {
+		p.OldPrice = oldPrice
+		p.PriceDiff = s.ShippingCost - oldPrice
+	}
+
 	return json.Marshal(p)
 }
 

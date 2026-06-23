@@ -30,6 +30,8 @@ type BalanceValidator interface {
 	// ConfirmHoldForOrder transitions an active shipping hold to confirmed, consuming the reserved funds.
 	// When no hold exists, deducts amount directly from available balance.
 	ConfirmHoldForOrder(ctx context.Context, tenantID int64, orderNumber string, amount int64) error
+	// AdjustShippingBalance applies a price correction (deducts if higher, credits if lower) and records audit entry.
+	AdjustShippingBalance(ctx context.Context, tenantID int64, oldPrice, newPrice int64, currency, orderNumber string) error
 }
 
 type ShippingService struct {

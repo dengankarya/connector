@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -42,6 +43,13 @@ func NewClient(clientID, secretKey, baseURL, webhookBaseURL string, logger *logr
 	}
 }
 
+// sanitizeName removes special characters from the merchant name to comply with Doku's "Safe String" requirement.
+// Keeps alphanumeric, spaces, hyphens, and underscores.
+func sanitizeName(name string) string {
+	re := regexp.MustCompile(`[^a-zA-Z0-9\s\-_]`)
+	return re.ReplaceAllString(name, "")
+}
+
 // CreateSubAccount calls POST /sac-merchant/v1/accounts.
 // Returns the gateway-assigned account ID (e.g. "SAC-0000-0000000000001") and initial status.
 func (c *Client) CreateSubAccount(ctx context.Context, email, name string) (gatewayAccountID, status string, err error) {
@@ -62,7 +70,7 @@ func (c *Client) CreateSubAccount(ctx context.Context, email, name string) (gate
 	req := reqBody{}
 	req.Account.Email = email
 	req.Account.Type = "STANDARD"
-	req.Account.Name = name
+	req.Account.Name = sanitizeName(name)
 
 	var resp respBody
 	if err := c.post(ctx, "/sac-merchant/v1/accounts", req, &resp); err != nil {
