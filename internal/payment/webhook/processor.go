@@ -15,12 +15,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// ShippingBalanceCreditor credits a merchant's shipping balance from the shipping_fee
-// portion of a paid payment. Must be called inside an existing DB transaction.
-// shipping/balance.Service satisfies this interface.
-type ShippingBalanceCreditor interface {
-	CreditFromPayment(ctx context.Context, tenantID int64, amount int64, currency string) error
-}
 
 // PaymentForwarder forwards a normalized payment status event to an upstream system
 // (e.g. Tokokarya) after the DB transaction commits. Called in a fire-and-forget goroutine.
@@ -49,31 +43,28 @@ type Processor struct {
 	eventRepo        *repository.WebhookEventRepository
 	txnRepo          *repository.TransactionRepository
 	ledger           *ledger.Service
-	txRunner         *repository.TxRunner
-	shippingCreditor ShippingBalanceCreditor // optional; if nil shipping_fee credit is skipped
-	forwarder        PaymentForwarder        // optional; if nil Tokokarya forwarding is skipped
-	logger           *logrus.Logger
+	txRunner  *repository.TxRunner
+	forwarder PaymentForwarder // optional; if nil Tokokarya forwarding is skipped
+	logger    *logrus.Logger
 }
 
 // NewProcessor creates a Processor with all required dependencies.
-// shippingCreditor and forwarder may be nil.
+// forwarder may be nil.
 func NewProcessor(
 	eventRepo *repository.WebhookEventRepository,
 	txnRepo *repository.TransactionRepository,
 	ledgerSvc *ledger.Service,
 	txRunner *repository.TxRunner,
-	shippingCreditor ShippingBalanceCreditor,
 	forwarder PaymentForwarder,
 	logger *logrus.Logger,
 ) *Processor {
 	return &Processor{
-		eventRepo:        eventRepo,
-		txnRepo:          txnRepo,
-		ledger:           ledgerSvc,
-		txRunner:         txRunner,
-		shippingCreditor: shippingCreditor,
-		forwarder:        forwarder,
-		logger:           logger,
+		eventRepo: eventRepo,
+		txnRepo:   txnRepo,
+		ledger:    ledgerSvc,
+		txRunner:  txRunner,
+		forwarder: forwarder,
+		logger:    logger,
 	}
 }
 
@@ -293,11 +284,6 @@ func (p *Processor) handlePaid(ctx context.Context, event *domain.WebhookEvent, 
 		return fmt.Errorf("record payment ledger: %w", err)
 	}
 
-	if p.shippingCreditor != nil && txn.ShippingFee > 0 {
-		if err := p.shippingCreditor.CreditFromPayment(ctx, txn.TenantID, txn.ShippingFee, txn.Currency); err != nil {
-			return fmt.Errorf("credit shipping balance: %w", err)
-		}
-	}
 
 	log.WithFields(logrus.Fields{
 		"prev_status":         prevStatus,

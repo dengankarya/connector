@@ -21,12 +21,6 @@ import (
 // ErrInvalidCursor is returned when the cursor query parameter cannot be decoded.
 var ErrInvalidCursor = errors.New("invalid cursor")
 
-// ShippingBalanceCreditor credits a merchant's shipping balance from the shipping_fee
-// of a confirmed payment. Must be callable inside an existing DB transaction.
-type ShippingBalanceCreditor interface {
-	CreditFromPayment(ctx context.Context, tenantID int64, amount int64, currency string) error
-}
-
 // GatewayAccountFinder resolves a tenant's payment gateway sub-account ID.
 // account.Service satisfies this interface.
 type GatewayAccountFinder interface {
@@ -35,31 +29,28 @@ type GatewayAccountFinder interface {
 
 // PaymentService handles payment creation and querying.
 type PaymentService struct {
-	txnRepo          *repository.TransactionRepository
-	ledger           *ledger.Service
-	txRunner         *repository.TxRunner
-	shippingCreditor ShippingBalanceCreditor // optional; nil = skip
-	gatewayFinder    GatewayAccountFinder    // optional; nil = skip sub-account lookup
-	logger           *logrus.Logger
+	txnRepo       *repository.TransactionRepository
+	ledger        *ledger.Service
+	txRunner      *repository.TxRunner
+	gatewayFinder GatewayAccountFinder // optional; nil = skip sub-account lookup
+	logger        *logrus.Logger
 }
 
 // NewPaymentService creates a PaymentService.
-// shippingCreditor and gatewayFinder may be nil.
+// gatewayFinder may be nil.
 func NewPaymentService(
 	txnRepo *repository.TransactionRepository,
 	txRunner *repository.TxRunner,
 	ledgerSvc *ledger.Service,
-	shippingCreditor ShippingBalanceCreditor,
 	gatewayFinder GatewayAccountFinder,
 	logger *logrus.Logger,
 ) *PaymentService {
 	return &PaymentService{
-		txnRepo:          txnRepo,
-		ledger:           ledgerSvc,
-		txRunner:         txRunner,
-		shippingCreditor: shippingCreditor,
-		gatewayFinder:    gatewayFinder,
-		logger:           logger,
+		txnRepo:       txnRepo,
+		ledger:        ledgerSvc,
+		txRunner:      txRunner,
+		gatewayFinder: gatewayFinder,
+		logger:        logger,
 	}
 }
 
@@ -228,11 +219,6 @@ func (s *PaymentService) ConfirmManualPayment(ctx context.Context, req ConfirmMa
 		}
 		if err := s.ledger.RecordManualPayment(txCtx, txn); err != nil {
 			return fmt.Errorf("confirm manual payment: ledger: %w", err)
-		}
-		if s.shippingCreditor != nil && txn.ShippingFee > 0 {
-			if err := s.shippingCreditor.CreditFromPayment(txCtx, txn.TenantID, txn.ShippingFee, txn.Currency); err != nil {
-				return fmt.Errorf("confirm manual payment: credit shipping balance: %w", err)
-			}
 		}
 
 		log.WithFields(logrus.Fields{

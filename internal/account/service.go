@@ -286,14 +286,6 @@ func (s *Service) Topup(ctx context.Context, req TopupRequest) (*ShippingTopup, 
 	return topup, nil
 }
 
-// CreditFromPayment credits available balance from the shipping_fee of a paid payment.
-// Must be called inside an existing DB transaction.
-func (s *Service) CreditFromPayment(ctx context.Context, tenantID int64, amount int64, currency string) error {
-	if amount <= 0 {
-		return nil
-	}
-	return s.repo.CreditAvailable(ctx, tenantID, amount, currency)
-}
 
 // AdjustShippingBalance applies a shipping price correction to the merchant's available balance
 // and records an audit row in shipping_price_adjustments.

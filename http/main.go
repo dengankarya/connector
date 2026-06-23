@@ -126,13 +126,13 @@ func main() {
 		}
 		balanceSvc = account.NewService(balanceRepo, txRunner, dokuClient, log.StandardLogger())
 
-		webhookProc = webhook.NewProcessor(eventRepo, txnRepo, ledgerSvc, txRunner, balanceSvc, tokokaryaClient, log.StandardLogger())
+		webhookProc = webhook.NewProcessor(eventRepo, txnRepo, ledgerSvc, txRunner, tokokaryaClient, log.StandardLogger())
 		webhookHandler = webhook.NewAsynqHandler(webhookProc, log.StandardLogger())
 
 		// Asynq client needed for ReplayService — created before the section below.
 		_ = payoutRepo // used by PayoutService; wired separately if needed
 
-		paymentSvc = paymentservice.NewPaymentService(txnRepo, txRunner, ledgerSvc, balanceSvc, balanceSvc, log.StandardLogger())
+		paymentSvc = paymentservice.NewPaymentService(txnRepo, txRunner, ledgerSvc, balanceSvc, log.StandardLogger())
 
 		// Jobs
 		expireJob = jobs.NewExpirePaymentsJob(txnRepo, txRunner, log.StandardLogger())
