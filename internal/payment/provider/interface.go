@@ -34,10 +34,7 @@ type CreateInvoiceRequest struct {
 	// PaymentMethodTypes restricts which payment channels appear on the checkout page.
 	// When empty, the provider shows all available methods.
 	PaymentMethodTypes []string
-	// WebhookNotificationURL is the full URL where the provider should POST payment status updates.
-	// Used by DOKU as override_notification_url. Empty = use provider default.
-	WebhookNotificationURL string
-	// ResultURL is provider-specific result page URL. Used by DOKU as callback_url_result.
+	// ResultURL is provider-specific result page URL. Used by DOKU as callback_url_result. Optional.
 	ResultURL string
 }
 

@@ -16,26 +16,29 @@ import (
 
 // Client is a thin HTTP client for the Doku Sub-Account (SAC) API.
 type Client struct {
-	clientID  string
-	secretKey string
-	baseURL   string
-	http      *http.Client
-	logger    *logrus.Logger
+	clientID       string
+	secretKey      string
+	baseURL        string
+	webhookBaseURL string // base URL for constructing webhook notification URL
+	http           *http.Client
+	logger         *logrus.Logger
 }
 
 // NewClient creates a Doku API client.
 // baseURL: "https://api.doku.com" (production) or "https://api-sandbox.doku.com" (sandbox).
+// webhookBaseURL: base URL for webhook notifications (e.g. "https://connector.example.com"); empty to omit override.
 // If logger is nil, a default logger is used.
-func NewClient(clientID, secretKey, baseURL string, logger *logrus.Logger) *Client {
+func NewClient(clientID, secretKey, baseURL, webhookBaseURL string, logger *logrus.Logger) *Client {
 	if logger == nil {
 		logger = logrus.New()
 	}
 	return &Client{
-		clientID:  clientID,
-		secretKey: secretKey,
-		baseURL:   baseURL,
-		http:      &http.Client{Timeout: 30 * time.Second},
-		logger:    logger,
+		clientID:       clientID,
+		secretKey:      secretKey,
+		baseURL:        baseURL,
+		webhookBaseURL: webhookBaseURL,
+		http:           &http.Client{Timeout: 30 * time.Second},
+		logger:         logger,
 	}
 }
 

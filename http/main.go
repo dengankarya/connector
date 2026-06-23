@@ -122,7 +122,7 @@ func main() {
 		ledgerSvc = ledger.New(ledgerRepo, log.StandardLogger())
 
 		if cfg.DokuClientID != "" {
-			dokuClient = doku.NewClient(cfg.DokuClientID, cfg.DokuSecretKey, cfg.DokuBaseURL, log.StandardLogger())
+			dokuClient = doku.NewClient(cfg.DokuClientID, cfg.DokuSecretKey, cfg.DokuBaseURL, cfg.WebhookBaseURL, log.StandardLogger())
 		}
 		balanceSvc = account.NewService(balanceRepo, txRunner, dokuClient, log.StandardLogger())
 

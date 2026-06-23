@@ -34,6 +34,12 @@ func (c *Client) CreateInvoice(ctx context.Context, req provider.CreateInvoiceRe
 		invoiceNumber = invoiceNumber[:64]
 	}
 
+	// Construct webhook notification URL if base URL is configured
+	overrideNotificationURL := ""
+	if c.webhookBaseURL != "" {
+		overrideNotificationURL = c.webhookBaseURL + "/api/v1/webhook/doku"
+	}
+
 	result, err := c.CreateCheckout(ctx, CheckoutRequest{
 		InvoiceNumber:           invoiceNumber,
 		Amount:                  req.Amount,
@@ -44,7 +50,7 @@ func (c *Client) CreateInvoice(ctx context.Context, req provider.CreateInvoiceRe
 		AccountID:               req.GatewayAccountID,
 		PaymentType:             req.PaymentType,
 		PaymentMethodTypes:      req.PaymentMethodTypes,
-		OverrideNotificationURL: req.WebhookNotificationURL,
+		OverrideNotificationURL: overrideNotificationURL,
 		CallbackURL:             req.SuccessReturnURL,
 		CallbackURLCancel:       req.CancelReturnURL,
 		CallbackURLResult:       req.ResultURL,

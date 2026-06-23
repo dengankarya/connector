@@ -18,10 +18,9 @@ type CreatePaymentBody struct {
 	CustomerMobile         string            `json:"customer_mobile"`
 	ExpiresAt              *time.Time        `json:"expires_at"`
 	Metadata               map[string]string `json:"metadata"`
-	PaymentType            string            `json:"payment_type"`
-	PaymentMethodTypes     []string          `json:"payment_method_types"`
-	WebhookNotificationURL string            `json:"webhook_notification_url"` // override webhook URL
-	ResultURL              string            `json:"result_url"`               // result page URL for DOKU
+	PaymentType        string   `json:"payment_type"`
+	PaymentMethodTypes []string `json:"payment_method_types"`
+	ResultURL          string   `json:"result_url"` // optional; DOKU result page URL
 }
 
 // CreateManualPaymentBody is the request body for POST /payments/manual.
