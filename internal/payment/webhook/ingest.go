@@ -86,13 +86,17 @@ func RegisterIngestHandler(
 		}).Info("webhook event parsed")
 
 		event := &domain.WebhookEvent{
-			Provider:         prov.ProviderName(),
-			ProviderEventID:  parsed.ProviderEventID,
-			EventType:        parsed.EventType,
-			RawPayload:       rawBody,
-			Headers:          headers,
-			SignatureValid:   true,
-			ProcessingStatus: domain.WebhookStatusReceived,
+			Provider:          prov.ProviderName(),
+			ProviderEventID:   parsed.ProviderEventID,
+			EventType:         parsed.EventType,
+			RawPayload:        rawBody,
+			Headers:           headers,
+			SignatureValid:    true,
+			ProviderInvoiceID: parsed.ProviderInvoiceID,
+			ChannelCode:       parsed.ChannelCode,
+			ProviderPaymentID: parsed.PaymentID,
+			FailureCode:       parsed.FailureCode,
+			ProcessingStatus:  domain.WebhookStatusReceived,
 		}
 
 		if err := eventRepo.Create(ctx, event); err != nil {

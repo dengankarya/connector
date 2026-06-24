@@ -207,17 +207,15 @@ func (p *Processor) handle(ctx context.Context, event *domain.WebhookEvent, txn 
 	case "payment_session.expired":
 		return p.handleExpired(ctx, event, txn, log)
 	case "payment_session.failed":
-		details := parsePaymentDetails(event.RawPayload)
-		return p.handleFailed(ctx, event, txn, log, details.FailureCode)
+		return p.handleFailed(ctx, event, txn, log, event.FailureCode)
 	case "payment.authorization":
 		log.Info("payment authorised — no action required for automatic capture")
 		return nil
 	case "payment.failure":
-		details := parsePaymentDetails(event.RawPayload)
-		if details.FailureCode == "PAYMENT_REQUEST_EXPIRED" {
+		if event.FailureCode == "PAYMENT_REQUEST_EXPIRED" {
 			return p.handleExpired(ctx, event, txn, log)
 		}
-		return p.handleFailed(ctx, event, txn, log, details.FailureCode)
+		return p.handleFailed(ctx, event, txn, log, event.FailureCode)
 
 	default:
 		log.WithField("event_type", event.EventType).Warn("unhandled webhook event type — marking processed without action")
@@ -228,11 +226,10 @@ func (p *Processor) handle(ctx context.Context, event *domain.WebhookEvent, txn 
 func (p *Processor) handlePaid(ctx context.Context, event *domain.WebhookEvent, txn *domain.PaymentTransaction, log *logrus.Entry) error {
 	prevStatus := txn.Status
 
-	// Capture payment details from the parsed webhook payload regardless of whether
+	// Capture payment details from the webhook event regardless of whether
 	// we transition state — payment_session.completed has no channel_code, but
 	// payment.capture (fired shortly after) does. We must update payment_method even
 	// when the transaction is already paid (idempotent second event).
-	details := parsePaymentDetails(event.RawPayload)
 
 	alreadyPaid := false
 	if err := txn.TransitionTo(domain.StatusPaid); err != nil {
@@ -245,16 +242,16 @@ func (p *Processor) handlePaid(ctx context.Context, event *domain.WebhookEvent, 
 
 	if alreadyPaid {
 		// Only update if this event adds information we don't already have.
-		if details.ChannelCode == "" && details.PaymentID == "" {
+		if event.ChannelCode == "" && event.ProviderPaymentID == "" {
 			log.WithField("status", txn.Status).Info("transaction already paid — idempotent")
 			return nil
 		}
 		// Backfill payment_channel / provider_payment_id from the richer event.
-		if details.ChannelCode != "" && txn.PaymentChannel == "" {
-			txn.PaymentChannel = details.ChannelCode
+		if event.ChannelCode != "" && txn.PaymentChannel == "" {
+			txn.PaymentChannel = event.ChannelCode
 		}
-		if details.PaymentID != "" && txn.ProviderPaymentID == "" {
-			txn.ProviderPaymentID = details.PaymentID
+		if event.ProviderPaymentID != "" && txn.ProviderPaymentID == "" {
+			txn.ProviderPaymentID = event.ProviderPaymentID
 		}
 		txn.Version++ // increment version so Update WHERE version = expected passes
 		if err := p.txnRepo.Update(ctx, txn); err != nil {
@@ -269,11 +266,11 @@ func (p *Processor) handlePaid(ctx context.Context, event *domain.WebhookEvent, 
 
 	now := time.Now().UTC()
 	txn.PaidAt = &now
-	if details.ChannelCode != "" {
-		txn.PaymentChannel = details.ChannelCode
+	if event.ChannelCode != "" {
+		txn.PaymentChannel = event.ChannelCode
 	}
-	if details.PaymentID != "" {
-		txn.ProviderPaymentID = details.PaymentID
+	if event.ProviderPaymentID != "" {
+		txn.ProviderPaymentID = event.ProviderPaymentID
 	}
 
 	if err := p.txnRepo.Update(ctx, txn); err != nil {
@@ -337,10 +334,8 @@ func (p *Processor) handleFailed(ctx context.Context, _ *domain.WebhookEvent, tx
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 func extractInvoiceID(event *domain.WebhookEvent) string {
-	// Prefer payment_session_id from raw payload.
-	details := parsePaymentDetails(event.RawPayload)
-	if details.PaymentSessionID != "" {
-		return details.PaymentSessionID
+	if event.ProviderInvoiceID != "" {
+		return event.ProviderInvoiceID
 	}
 	// Fallback: extract from composite ProviderEventID ("event_type:session_id").
 	for i := len(event.ProviderEventID) - 1; i >= 0; i-- {

@@ -28,6 +28,10 @@ type WebhookEvent struct {
 	Headers            map[string]string       `json:"headers,omitempty"`
 	Signature          string                  `json:"signature,omitempty"`
 	SignatureValid     bool                    `json:"signature_valid,omitempty"`
+	ProviderInvoiceID  string                  `json:"provider_invoice_id,omitempty"` // invoice/order number used to look up transaction
+	ChannelCode        string                  `json:"channel_code,omitempty"`      // payment method/channel (e.g. "CREDIT_CARD", "VA_BCA")
+	ProviderPaymentID  string                  `json:"provider_payment_id,omitempty"` // provider-assigned payment/session ID
+	FailureCode        string                  `json:"failure_code,omitempty"`      // failure reason code (populated by provider on failed events)
 	ProcessingStatus   WebhookProcessingStatus `json:"processing_status,omitempty"`
 	ProcessingAttempts int                     `json:"processing_attempts,omitempty"`
 	LastError          string                  `json:"last_error,omitempty"`
