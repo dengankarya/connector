@@ -164,7 +164,7 @@ func main() {
 		return c.Status(http.StatusOK).JSON(common.Response{Status: http.StatusText(http.StatusOK)})
 	})
 
-	registerHealthHandler(app, pool, cfg.RedisURL)
+	registerHealthHandler(app)
 
 	// ── Biteship webhook — public, no API key check ─────────────────────────
 	if shippingMod.Repository != nil {
