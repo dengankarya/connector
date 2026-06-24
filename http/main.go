@@ -19,14 +19,10 @@ import (
 	"github.com/dengankarya/connector/internal/geocoding"
 	"github.com/dengankarya/connector/internal/payment"
 	"github.com/dengankarya/connector/internal/payment/jobs"
-	"github.com/dengankarya/connector/internal/payment/ledger"
 	"github.com/dengankarya/connector/internal/payment/provider"
-	"github.com/dengankarya/connector/internal/payment/repository"
-	paymentservice "github.com/dengankarya/connector/internal/payment/service"
 	"github.com/dengankarya/connector/internal/payment/webhook"
 	"github.com/dengankarya/connector/internal/region"
 	"github.com/dengankarya/connector/internal/shipping"
-	shipmentrepo "github.com/dengankarya/connector/internal/shipping/repository"
 	"github.com/dengankarya/connector/internal/worker"
 	"github.com/dengankarya/connector/pkg/biteship"
 	"github.com/dengankarya/connector/pkg/dbconn"
@@ -81,24 +77,12 @@ func main() {
 
 	// ── PostgreSQL ──────────────────────────────────────────────────────────
 	var (
-		pool                  *pgxpool.Pool
-		txnRepo               *repository.TransactionRepository
-		eventRepo             *repository.WebhookEventRepository
-		webhookLogRepo        *repository.WebhookRequestLogRepository
-		ledgerRepo            *repository.LedgerRepository
-		payoutRepo            *repository.PayoutRepository
-		txRunner              *repository.TxRunner
-		ledgerSvc             *ledger.Service
-		webhookProc           *webhook.Processor
-		webhookHandler        *webhook.AsynqHandler
-		replaySvc             *webhook.ReplayService
-		paymentSvc            *paymentservice.PaymentService
-		expireJob             *jobs.ExpirePaymentsJob
-		retryJob              *jobs.RetryWebhooksJob
-		cancelExpiredOrderJob *jobs.CancelExpiredOrderJob
-		shipmentRepo          *shipmentrepo.ShipmentRepository
-		balanceSvc            *account.Service
-		dokuClient            *doku.Client // shared: account gateway + payment provider
+		pool              *pgxpool.Pool
+		paymentMod        *payment.Module
+		accountMod        *account.Module
+		shippingMod       *shipping.Module
+		cancelExpiredJob  *jobs.CancelExpiredOrderJob
+		dokuClient        *doku.Client // shared: account gateway + payment provider
 	)
 
 	if cfg.DatabaseDSN != "" {
@@ -111,36 +95,10 @@ func main() {
 		}
 		defer pool.Close()
 
-		// Repositories
-		txnRepo = repository.NewTransactionRepository(pool)
-		eventRepo = repository.NewWebhookEventRepository(pool)
-		webhookLogRepo = repository.NewWebhookRequestLogRepository(pool)
-		ledgerRepo = repository.NewLedgerRepository(pool)
-		payoutRepo = repository.NewPayoutRepository(pool)
-		txRunner = repository.NewTxRunner(pool)
-		shipmentRepo = shipmentrepo.NewShipmentRepository(pool)
-		balanceRepo := account.NewRepository(pool)
-
-		// Business layer
-		ledgerSvc = ledger.New(ledgerRepo, log.StandardLogger())
-
+		// Initialize Doku client if configured
 		if cfg.DokuClientID != "" {
 			dokuClient = doku.NewClient(cfg.DokuClientID, cfg.DokuSecretKey, cfg.DokuBaseURL, cfg.WebhookBaseURL, log.StandardLogger())
 		}
-		balanceSvc = account.NewService(balanceRepo, txRunner, dokuClient, log.StandardLogger())
-
-		webhookProc = webhook.NewProcessor(eventRepo, txnRepo, ledgerSvc, txRunner, tokokaryaClient, log.StandardLogger())
-		webhookHandler = webhook.NewAsynqHandler(webhookProc, log.StandardLogger())
-
-		// payoutRepo is constructed but not yet wired — PayoutService is complete,
-		// waiting for provider.PaymentProvider to implement Create/DispatchPayout methods.
-		_ = payoutRepo
-
-		paymentSvc = paymentservice.NewPaymentService(txnRepo, txRunner, ledgerSvc, balanceSvc, log.StandardLogger())
-
-		// Jobs
-		expireJob = jobs.NewExpirePaymentsJob(txnRepo, txRunner, log.StandardLogger())
-		retryJob = jobs.NewRetryWebhooksJob(nil, log.StandardLogger()) // replay wired after enqueuer init below
 	}
 
 	// ── asynq client (enqueuer) + embedded worker server ───────────────────
@@ -151,20 +109,23 @@ func main() {
 	asynqClient := asynq.NewClient(redisOpt)
 	defer asynqClient.Close()
 
-	// Wire ReplayService now that enqueuer exists.
-	if eventRepo != nil {
-		replaySvc = webhook.NewReplayService(eventRepo, asynqClient, log.StandardLogger())
-		retryJob = jobs.NewRetryWebhooksJob(replaySvc, log.StandardLogger())
-	}
+	// Wire modules (payment, account, shipping) with all their components
+	paymentMod = payment.NewModule(pool, asynqClient, dokuClient, nil, tokokaryaClient, log.StandardLogger())
+	accountMod = account.NewModule(pool, paymentMod.TxRunner, dokuClient, log.StandardLogger())
 
-	// CancelExpiredOrderJob only needs the Tokokarya client — no DB dependency.
-	cancelExpiredOrderJob = jobs.NewCancelExpiredOrderJob(tokokaryaClient, log.StandardLogger())
+	// Biteship client setup for shipping
+	var biteshipClient *biteship.Client
+	if cfg.BiteshipAPIKey != "" {
+		biteshipClient = biteship.NewClient(cfg.BiteshipAPIKey, cfg.BiteshipBaseURL)
+	}
+	shippingMod = shipping.NewModule(pool, biteshipClient, biteshipClient, accountMod.Service, log.StandardLogger())
 
 	workerServer := worker.NewServer(cfg.RedisURL)
 	workerMux := worker.NewMux(worker.MuxOptions{
-		WebhookEventHandler: webhookHandler, // nil-safe: NewMux checks for nil
+		WebhookEventHandler: paymentMod.WebhookHandler, // nil-safe: NewMux checks for nil
 	})
-	workerMux.HandleFunc(worker.TaskCancelExpiredOrder, cancelExpiredOrderJob.ProcessTask)
+	cancelExpiredJob = jobs.NewCancelExpiredOrderJob(tokokaryaClient, log.StandardLogger())
+	workerMux.HandleFunc(worker.TaskCancelExpiredOrder, cancelExpiredJob.ProcessTask)
 	go func() {
 		if err := workerServer.Start(workerMux); err != nil {
 			log.WithError(err).Fatal("asynq worker server failed")
@@ -172,17 +133,17 @@ func main() {
 	}()
 
 	// Register periodic asynq jobs (cron-style).
-	if cfg.DatabaseDSN != "" {
+	if paymentMod.ExpireJob != nil {
 		scheduler := asynq.NewScheduler(redisOpt, nil)
 		_, _ = scheduler.Register("*/5 * * * *", asynq.NewTask(worker.TaskExpirePayments, nil))
 		_, _ = scheduler.Register("*/10 * * * *", asynq.NewTask(worker.TaskRetryWebhooks, nil))
 
 		// Register job handlers on the worker mux.
 		workerMux.HandleFunc(worker.TaskExpirePayments, func(ctx context.Context, t *asynq.Task) error {
-			return expireJob.Run(ctx)
+			return paymentMod.ExpireJob.Run(ctx)
 		})
 		workerMux.HandleFunc(worker.TaskRetryWebhooks, func(ctx context.Context, t *asynq.Task) error {
-			return retryJob.Run(ctx)
+			return paymentMod.RetryJob.Run(ctx)
 		})
 
 		go func() {
@@ -206,23 +167,22 @@ func main() {
 	registerHealthHandler(app, pool, cfg.RedisURL)
 
 	// ── Biteship webhook — public, no API key check ─────────────────────────
-	shipping.RegisterWebhookHandler(apiRootGroup, cfg.BiteshipWebhookSignatureKey, cfg.BiteshipWebhookSignatureValue, shipmentRepo, tokokaryaClient, balanceSvc, log.StandardLogger())
+	if shippingMod.Repository != nil {
+		shipping.RegisterWebhookHandler(apiRootGroup, cfg.BiteshipWebhookSignatureKey, cfg.BiteshipWebhookSignatureValue, shippingMod.Repository, tokokaryaClient, accountMod.Service, log.StandardLogger())
+	}
 
 	// ── DOKU payment webhook — public, no API key check ──────────────────────
-	if dokuClient != nil && eventRepo != nil {
-		webhook.RegisterIngestHandler(apiRootGroup, "/webhook/doku", dokuClient, eventRepo, webhookLogRepo, asynqClient, log.StandardLogger())
+	if dokuClient != nil && paymentMod.EventRepo != nil {
+		webhook.RegisterIngestHandler(apiRootGroup, "/webhook/doku", dokuClient, paymentMod.EventRepo, paymentMod.WebhookLogRepo, asynqClient, log.StandardLogger())
 	}
 
 	// ── Authenticated routes ─────────────────────────────────────────────────
 	app.Use(authenticatedRequest(cfg))
 
-	biteshipClient := biteship.NewClient(cfg.BiteshipAPIKey, cfg.BiteshipBaseURL)
-	cachedAggregator := shipping.NewCachedAggregator(biteshipClient)
-	shippingSvc := shipping.NewShippingService(cachedAggregator, biteshipClient, shipmentRepo, balanceSvc)
-	shipping.RegisterHandlers(apiRootGroup.Group("/shipments"), shippingSvc)
+	shipping.RegisterHandlers(apiRootGroup.Group("/shipments"), shippingMod.Service)
 
-	if balanceSvc != nil {
-		account.RegisterHandlers(apiRootGroup.Group("/accounts"), balanceSvc, adminRequest(cfg))
+	if accountMod.Service != nil {
+		account.RegisterHandlers(apiRootGroup.Group("/accounts"), accountMod.Service, adminRequest(cfg))
 	}
 
 	wilayahClient := wilayah.NewClient(cfg.WilayahBaseURL)
@@ -236,7 +196,7 @@ func main() {
 	geocoding.RegisterHandlers(apiRootGroup.Group("/geocoding"), geocodingService)
 
 	// Payment module endpoints (requires DB).
-	if paymentSvc != nil {
+	if paymentMod.PaymentService != nil {
 		// Convert *doku.Client to the interface explicitly so a nil pointer doesn't
 		// produce a non-nil interface value (which would wrongly enable POST /payments).
 		var paymentProv provider.PaymentProvider
@@ -245,7 +205,7 @@ func main() {
 		}
 		payment.RegisterPaymentHandlers(
 			apiRootGroup.Group("/payments"),
-			paymentSvc,
+			paymentMod.PaymentService,
 			paymentProv,
 			asynqClient,
 			log.StandardLogger(),
