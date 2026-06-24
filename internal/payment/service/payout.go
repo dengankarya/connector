@@ -28,8 +28,8 @@ type CreatePayoutRequest struct {
 
 // PayoutService handles payout creation and lifecycle.
 type PayoutService struct {
-	payoutRepo *repository.PayoutRepository
-	ledgerRepo *repository.LedgerRepository
+	payoutRepo PayoutStore
+	ledgerRepo ledger.Repository
 	ledgerSvc  *ledger.Service
 	prov       provider.PaymentProvider
 	txRunner   *repository.TxRunner
@@ -38,8 +38,8 @@ type PayoutService struct {
 
 // NewPayoutService creates a PayoutService.
 func NewPayoutService(
-	payoutRepo *repository.PayoutRepository,
-	ledgerRepo *repository.LedgerRepository,
+	payoutRepo PayoutStore,
+	ledgerRepo ledger.Repository,
 	ledgerSvc *ledger.Service,
 	prov provider.PaymentProvider,
 	txRunner *repository.TxRunner,

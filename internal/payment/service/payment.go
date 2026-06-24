@@ -27,9 +27,47 @@ type GatewayAccountFinder interface {
 	GetGatewayAccountIDForTenant(ctx context.Context, tenantID int64) (string, error)
 }
 
+// TransactionStore abstracts payment transaction persistence.
+type TransactionStore interface {
+	Create(ctx context.Context, txn *domain.PaymentTransaction) error
+	GetByID(ctx context.Context, id uuid.UUID) (*domain.PaymentTransaction, error)
+	GetByIDForUpdate(ctx context.Context, id uuid.UUID) (*domain.PaymentTransaction, error)
+	GetByProviderInvoiceIDForUpdate(ctx context.Context, provider, invoiceID string) (*domain.PaymentTransaction, error)
+	GetByProviderInvoiceID(ctx context.Context, provider, invoiceID string) (*domain.PaymentTransaction, error)
+	Update(ctx context.Context, txn *domain.PaymentTransaction) error
+	ListDistinctTenants(ctx context.Context) ([]int64, error)
+	ListByTenant(ctx context.Context, tenantID int64, p repository.ListParams) ([]*domain.PaymentTransaction, error)
+	ListExpired(ctx context.Context, limit int) ([]*domain.PaymentTransaction, error)
+	SumPendingSettlement(ctx context.Context, tenantID int64) (*repository.PendingSettlementSums, error)
+	SumSettled(ctx context.Context, tenantID int64) (*repository.PendingSettlementSums, error)
+}
+
+// WebhookEventStore abstracts webhook event persistence and status tracking.
+type WebhookEventStore interface {
+	Create(ctx context.Context, e *domain.WebhookEvent) error
+	GetByID(ctx context.Context, id uuid.UUID) (*domain.WebhookEvent, error)
+	GetByIDForUpdate(ctx context.Context, id uuid.UUID) (*domain.WebhookEvent, error)
+	GetByProviderEventID(ctx context.Context, provider, eventID string) (*domain.WebhookEvent, error)
+	UpdateStatus(ctx context.Context, id uuid.UUID, status domain.WebhookProcessingStatus, lastError string) error
+	IncrementAttempts(ctx context.Context, id uuid.UUID) error
+	MarkProcessed(ctx context.Context, eventID uuid.UUID, transactionID uuid.UUID) error
+	ResetForReplay(ctx context.Context, id uuid.UUID) error
+	ListFailed(ctx context.Context, limit int) ([]*domain.WebhookEvent, error)
+	ListDeadLettered(ctx context.Context, limit, offset int) ([]*domain.WebhookEvent, error)
+}
+
+// PayoutStore abstracts payout persistence.
+type PayoutStore interface {
+	Create(ctx context.Context, p *domain.Payout) error
+	GetByIDForUpdate(ctx context.Context, id uuid.UUID) (*domain.Payout, error)
+	Update(ctx context.Context, p *domain.Payout) error
+	ListPending(ctx context.Context, limit int) ([]*domain.Payout, error)
+	ListByTenant(ctx context.Context, tenantID int64, limit, offset int) ([]*domain.Payout, error)
+}
+
 // PaymentService handles payment creation and querying.
 type PaymentService struct {
-	txnRepo       *repository.TransactionRepository
+	txnRepo       TransactionStore
 	ledger        *ledger.Service
 	txRunner      *repository.TxRunner
 	gatewayFinder GatewayAccountFinder // optional; nil = skip sub-account lookup
@@ -39,7 +77,7 @@ type PaymentService struct {
 // NewPaymentService creates a PaymentService.
 // gatewayFinder may be nil.
 func NewPaymentService(
-	txnRepo *repository.TransactionRepository,
+	txnRepo TransactionStore,
 	txRunner *repository.TxRunner,
 	ledgerSvc *ledger.Service,
 	gatewayFinder GatewayAccountFinder,

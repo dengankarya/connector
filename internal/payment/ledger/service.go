@@ -9,19 +9,25 @@ import (
 	"fmt"
 
 	"github.com/dengankarya/connector/internal/payment/domain"
-	"github.com/dengankarya/connector/internal/payment/repository"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
+// Repository abstracts ledger entry storage.
+type Repository interface {
+	CreateEntries(ctx context.Context, entries []domain.LedgerEntry) error
+	GetByTransactionID(ctx context.Context, txID uuid.UUID) ([]domain.LedgerEntry, error)
+	SumByAccountType(ctx context.Context, tenantID int64, accountType domain.LedgerAccountType) (int64, error)
+}
+
 // Service writes balanced double-entry journals to the ledger.
 type Service struct {
-	repo   *repository.LedgerRepository
+	repo   Repository
 	logger *logrus.Logger
 }
 
 // New creates a ledger Service.
-func New(repo *repository.LedgerRepository, logger *logrus.Logger) *Service {
+func New(repo Repository, logger *logrus.Logger) *Service {
 	return &Service{repo: repo, logger: logger}
 }
 
