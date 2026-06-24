@@ -1,311 +1,127 @@
 # Connector
 
-A wrapper service for [DenganKarya](https://dengankarya.com) that abstracts communication with third-party APIs behind a single internal HTTP interface.
+A Go microservice that bridges [Tokokarya](https://tokokarya.com) (Indonesian ecommerce platform) with external providers for payments, shipping, and regional data.
 
-## Overview
+## Purpose
 
-Connector sits between DenganKarya's backend and external logistics/shipping providers. Instead of each service talking directly to third-party APIs, all that complexity is centralised here — auth, response normalisation, and caching.
-
-**Current integrations**
-
-| Provider | Purpose |
-|---|---|
-| Biteship | Courier list |
-| Wilayah.id | Indonesian administrative regions |
-| Xendit (XenPlatform) | Sub-account management |
+Connector centralizes integrations with third-party APIs behind a single internal interface. Instead of Tokokarya's backend talking directly to multiple providers (payment gateways, logistics networks, region databases), all protocol translation, validation, and error handling is owned by this service.
 
 ## Architecture
 
 ```
-DenganKarya backend
+Tokokarya Backend
        │
        ▼
   Connector (this service)
        │
-       ├── in-memory cache (24h TTL)
-       │
-       ▼
-  Third-party APIs (Biteship, Wilayah.id, Xendit, ...)
+       ├─── Payment Gateway (DOKU)
+       ├─── Shipping Provider (Biteship)
+       └─── Region Data (Wilayah.id)
+```
+
+### Module Organization
+
+```
+internal/
+  payment/          Payment processing (DOKU gateway integration)
+    domain/         Domain entities and state machine
+    repository/     Database access layer
+    service/        Business logic
+    webhook/        Async webhook processing pipeline
+    jobs/           Background jobs (expiry, retry)
+    
+  shipping/         Biteship shipping integration
+    domain/         Shipment entities and statuses
+    repository/     Database access
+    service/        Logistics service facade
+    webhook/        Webhook receiver and processor
+    
+  account/          Merchant accounts and DOKU sub-account management
+  region/           Indonesian region/administrative hierarchy lookups
+  geocoding/        Geoapify geocoding service
+  
+  worker/           Asynq task queue worker setup
+
+pkg/
+  postgres/         Shared PostgreSQL infrastructure
+  biteship/         Biteship HTTP client
+  doku/             DOKU payment gateway client
+  tokokarya/        Tokokarya webhook forwarder
+  wilayah/          Wilayah.id region client
+  geoapify/         Geoapify geocoding client
+  dbconn/           Database connection helpers
 ```
 
 ## Authentication
 
-All endpoints except the Xendit webhook require an `X-API-KEY` header.
+All API endpoints (except public webhooks) require an `X-API-KEY` header. Keys are configured via comma-separated `ALLOWED_API_KEYS` env var. Admin-only endpoints require keys from `ADMIN_API_KEYS`.
 
-```
-X-API-KEY: <your-key>
-```
-
-Keys are configured via the `ALLOWED_API_KEYS` env var (comma-separated).
-
----
-
-## API Reference
-
-All responses share a common envelope:
-
-```json
-{
-  "status": "OK",
-  "data": { ... },
-  "error": null
-}
-```
-
----
-
-### Shipping
-
-#### List couriers
-
-```
-GET /api/shippings/couriers
-```
-
-**Response** `200 OK`
-
-```json
-{
-  "status": "OK",
-  "data": [
-    {
-      "courier_name": "JNE",
-      "courier_code": "jne",
-      "courier_service_name": "Reguler",
-      "courier_service_code": "REG",
-      "tier": "economy",
-      "description": "...",
-      "service_type": "parcel",
-      "shipping_type": "now",
-      "shipment_duration_range": "1-3",
-      "shipment_duration_unit": "days",
-      "available_collection_method": ["pickup", "dropoff"],
-      "available_for_cash_on_delivery": true,
-      "available_for_proof_of_delivery": false,
-      "available_for_instant_waybill_id": false
-    }
-  ]
-}
-```
-
----
-
-### Regions
-
-#### List provinces
-
-```
-GET /api/regions/provinces
-```
-
-**Response** `200 OK`
-
-```json
-{
-  "status": "OK",
-  "data": [
-    { "code": "11", "name": "Aceh" }
-  ]
-}
-```
-
-#### List regencies
-
-```
-GET /api/regions/regencies/:province_code
-```
-
-| Param | Description |
-|---|---|
-| `province_code` | Province code from `/provinces` |
-
-**Response** `200 OK`
-
-```json
-{
-  "status": "OK",
-  "data": [
-    { "code": "1101", "name": "Kabupaten Simeulue" }
-  ]
-}
-```
-
-#### List districts
-
-```
-GET /api/regions/districts/:regency_code
-```
-
-| Param | Description |
-|---|---|
-| `regency_code` | Regency code from `/regencies/:province_code` |
-
-**Response** `200 OK`
-
-```json
-{
-  "status": "OK",
-  "data": [
-    { "code": "1101010", "name": "Teupah Selatan" }
-  ]
-}
-```
-
-#### List villages
-
-```
-GET /api/regions/villages/:district_code
-```
-
-| Param | Description |
-|---|---|
-| `district_code` | District code from `/districts/:regency_code` |
-
-**Response** `200 OK`
-
-```json
-{
-  "status": "OK",
-  "data": [
-    { "code": "1101010001", "name": "Latiung" }
-  ]
-}
-```
-k
----
-
-### Payments (XenPlatform)
-
-#### Create account
-
-```
-POST /api/payments/accounts
-```
-
-**Request body**
-
-```json
-{
-  "email": "angie@pinkpanther.com",
-  "type": "OWNED",
-  "public_profile": {
-    "business_name": "Owned Business Account"
-  }
-}
-```
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `email` | string | yes | Account email address |
-| `type` | string | yes | `OWNED` or `MANAGED` |
-| `public_profile.business_name` | string | no | Display name for the account |
-
-**Response** `201 Created`
-
-```json
-{
-  "status": "Created",
-  "data": {
-    "id": "6xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-    "email": "angie@pinkpanther.com",
-    "type": "OWNED",
-    "public_profile": {
-      "business_name": "Owned Business Account"
-    },
-    "status": "REGISTERED",
-    "country": "ID",
-    "created": "2024-01-01T00:00:00.000Z",
-    "updated": "2024-01-01T00:00:00.000Z"
-  }
-}
-```
-
-#### Get account
-
-```
-GET /api/payments/accounts/:id
-```
-
-| Param | Description |
-|---|---|
-| `id` | Account ID |
-
-**Response** `200 OK`
-
-```json
-{
-  "status": "OK",
-  "data": {
-    "id": "6xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-    "email": "angie@pinkpanther.com",
-    "type": "OWNED",
-    "public_profile": {
-      "business_name": "Owned Business Account"
-    },
-    "status": "REGISTERED",
-    "country": "ID",
-    "created": "2024-01-01T00:00:00.000Z",
-    "updated": "2024-01-01T00:00:00.000Z"
-  }
-}
-```
-
----
-
-### Webhooks
-
-#### Xendit webhook receiver
-
-```
-POST /webhook/xendit
-```
-
-This endpoint is **public** (no `X-API-KEY` required). Requests are validated using the `x-callback-token` header against the value configured in `XENDIT_WEBHOOK_TOKEN`.
-
-**Headers**
-
-| Header | Description |
-|---|---|
-| `x-callback-token` | Token from Xendit dashboard → Settings → Webhooks |
-
-**Request body** — sent by Xendit, varies by event type:
-
-```json
-{
-  "event": "account.created",
-  "business_id": "...",
-  "created": "2024-01-01T00:00:00.000Z",
-  "data": { ... }
-}
-```
-
-**Response** `200 OK`
-
-```json
-{
-  "status": "OK",
-  "data": { ... }
-}
-```
-
----
-
-## Configuration
-
-| Env var | Required | Default | Description |
-|---|---|---|---|
-| `ENV` | no | — | `development` or `production` |
-| `PORT` | no | — | HTTP listen port |
-| `ALLOWED_API_KEYS` | yes | — | Comma-separated valid API keys |
-| `BITESHIP_API_KEY` | yes | — | Biteship API key |
-| `BITESHIP_BASE_URL` | yes | — | e.g. `https://api.biteship.com` |
-| `WILAYAH_BASE_URL` | no | `https://wilayah.id` | Wilayah.id base URL |
-| `XENDIT_API_KEY` | yes | — | Xendit secret key |
-| `XENDIT_BASE_URL` | no | `https://api.xendit.co` | Xendit base URL |
-| `XENDIT_WEBHOOK_TOKEN` | no | — | Webhook callback verification token |
+Multi-tenant routes also require `X-Tenant-ID` (int64 header).
 
 ## Running
 
 ```bash
-go run ./http
+# Start the HTTP server + embedded asynq worker
+make run
+# or
+go run http/*.go
+
+# Run database migrations
+go run cmd/migrate/main.go up
+go run cmd/migrate/main.go down
+go run cmd/migrate/main.go version
+
+# Build Docker image
+make docker-build
 ```
+
+## Database
+
+- **Driver:** PostgreSQL via `jackc/pgx/v5`
+- **Migrations:** `golang-migrate` format, stored in `db/migrations/`
+- **Transaction pattern:** Context-based propagation via `pkg/postgres`; repositories read `pgx.Tx` from context
+
+## Background Jobs
+
+Work is queued to Redis via asynq:
+- `webhooks` queue (weight 6) — payment webhook processing, higher priority
+- `default` queue (weight 4) — other background tasks
+
+Periodic jobs (every 5–10 min) and one-shot tasks (scheduled cancellation) are registered via `asynq.Scheduler`.
+
+## Configuration
+
+Environment variables (see `config/config.go`):
+
+| Var | Purpose |
+|---|---|
+| `ENV` | Runtime environment (`development` / `production`) |
+| `PORT` | HTTP listen port |
+| `DATABASE_DSN` | PostgreSQL connection string (optional; payment module disabled if absent) |
+| `REDIS_URL` | Redis connection for asynq task queue |
+| `ALLOWED_API_KEYS` | Comma-separated regular API keys |
+| `ADMIN_API_KEYS` | Comma-separated admin API keys |
+| `DOKU_CLIENT_ID`, `DOKU_SECRET_KEY` | DOKU payment gateway credentials |
+| `BITESHIP_API_KEY`, `BITESHIP_BASE_URL` | Biteship shipping provider |
+| `BITESHIP_WEBHOOK_SIGNATURE_KEY`, `BITESHIP_WEBHOOK_SIGNATURE_VALUE` | Biteship webhook auth |
+| `WILAYAH_BASE_URL` | Indonesian region data API (default: `https://wilayah.id`) |
+| `GEOAPIFY_API_KEY` | Geocoding service |
+| `TOKOKARYA_URL`, `TOKOKARYA_API_KEY` | Downstream webhook forwarding target |
+
+## Tech Stack
+
+- **Language:** Go 1.26+
+- **Web Framework:** Fiber v3
+- **Database:** PostgreSQL 14+ with pgx v5
+- **Task Queue:** Asynq (Redis-backed)
+- **Logging:** Logrus (structured JSON)
+- **API Docs:** Swagger / OpenAPI (via swaggo)
+
+## Key Principles
+
+- **Domain-Driven Design:** Domain entities live in `domain/` packages; providers abstract external APIs
+- **Layered Architecture:** Controllers → Services → Repositories → Database
+- **Context-Based Transactions:** Repos detect transaction from context; no explicit connection passing
+- **Idempotency:** Critical paths (webhooks, payments) use reference IDs to prevent duplicate processing
+- **Async-First Webhooks:** Inbound webhooks are validated, stored, then processed asynchronously
+- **Tenant Isolation:** All multi-tenant data is scoped by `tenant_id`

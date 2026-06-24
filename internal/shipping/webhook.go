@@ -40,24 +40,12 @@ type ShipmentWebhookPayload struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
-// HoldManager confirms or releases a shipping hold in response to shipment status changes.
-type HoldManager interface {
-	// ConfirmHoldForOrder confirms the active hold for the order, consuming the reserved funds.
-	// When no hold exists, deducts amount directly from available balance.
-	ConfirmHoldForOrder(ctx context.Context, tenantID int64, orderNumber string, amount int64) error
-	// ReleaseHoldForOrder releases the active hold for the order, returning funds to available.
-	ReleaseHoldForOrder(ctx context.Context, tenantID int64, orderNumber string) error
-	// AdjustShippingBalance applies a price correction to the merchant's available balance
-	// and records an audit row. oldPrice and newPrice are the before/after shipping costs.
-	AdjustShippingBalance(ctx context.Context, tenantID int64, oldPrice, newPrice int64, currency, orderNumber string) error
-}
-
 type webhookController struct {
 	signatureKey   string
 	signatureValue string
 	repo           *repository.ShipmentRepository // may be nil
 	forwarder      ShipmentWebhookForwarder       // may be nil
-	holds          HoldManager                    // may be nil
+	accountManager domain.AccountManager           // may be nil
 	logger         *log.Logger
 }
 
@@ -69,7 +57,7 @@ func RegisterWebhookHandler(
 	signatureKey, signatureValue string,
 	repo *repository.ShipmentRepository,
 	forwarder ShipmentWebhookForwarder,
-	holds HoldManager,
+	accountManager domain.AccountManager,
 	logger *log.Logger,
 ) {
 	ctrl := webhookController{
@@ -77,7 +65,7 @@ func RegisterWebhookHandler(
 		signatureValue: signatureValue,
 		repo:           repo,
 		forwarder:      forwarder,
-		holds:          holds,
+		accountManager: accountManager,
 		logger:         logger,
 	}
 	app.Post("/webhook/biteship", ctrl.handleWebhook)
@@ -244,17 +232,17 @@ func (ctrl *webhookController) handleOrderStatus(ctx context.Context, body []byt
 	}
 
 	// Automatically manage the shipping hold when the order status changes.
-	if ctrl.holds != nil && s.OrderNumber != "" {
+	if ctrl.accountManager != nil && s.OrderNumber != "" {
 		switch evt.Status {
 		case "confirmed", "scheduled":
-			if err := ctrl.holds.ConfirmHoldForOrder(ctx, s.TenantID, s.OrderNumber, s.ShippingCost); err != nil {
+			if err := ctrl.accountManager.ConfirmHoldForOrder(ctx, s.TenantID, s.OrderNumber, s.ShippingCost); err != nil {
 				ctrl.logger.WithError(err).WithFields(log.Fields{
 					"order_number": s.OrderNumber,
 					"tenant_id":    s.TenantID,
 				}).Error("failed to confirm shipping hold on order confirmed")
 			}
 		case "cancelled":
-			if err := ctrl.holds.ReleaseHoldForOrder(ctx, s.TenantID, s.OrderNumber); err != nil {
+			if err := ctrl.accountManager.ReleaseHoldForOrder(ctx, s.TenantID, s.OrderNumber); err != nil {
 				ctrl.logger.WithError(err).WithFields(log.Fields{
 					"order_number": s.OrderNumber,
 					"tenant_id":    s.TenantID,
@@ -298,8 +286,8 @@ func (ctrl *webhookController) handleOrderPriceWithOldPrice(ctx context.Context,
 	// Auto-deduct price difference from merchant balance if price increased.
 	// Biteship has already charged the customer, so we need to reconcile the merchant's balance.
 	// Only deduct when price increased and shipment is confirmed (not draft).
-	if ctrl.holds != nil && evt.Price > oldPrice && s.Status != domain.ShipmentStatusDraft {
-		if err := ctrl.holds.AdjustShippingBalance(ctx, s.TenantID, oldPrice, evt.Price, "IDR", s.OrderNumber); err != nil {
+	if ctrl.accountManager != nil && evt.Price > oldPrice && s.Status != domain.ShipmentStatusDraft {
+		if err := ctrl.accountManager.AdjustShippingBalance(ctx, s.TenantID, oldPrice, evt.Price, "IDR", s.OrderNumber); err != nil {
 			ctrl.logger.WithError(err).WithFields(log.Fields{
 				"tenant_id":    s.TenantID,
 				"order_number": s.OrderNumber,

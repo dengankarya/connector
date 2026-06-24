@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 
+	"github.com/dengankarya/connector/internal/payment/webhook"
 	"github.com/hibiken/asynq"
 	"github.com/sirupsen/logrus"
 )
@@ -48,7 +49,7 @@ func NewMux(opts MuxOptions) *asynq.ServeMux {
 	mux := asynq.NewServeMux()
 
 	if opts.WebhookEventHandler != nil {
-		mux.Handle("payment:webhook:process", asynq.HandlerFunc(opts.WebhookEventHandler.ProcessTask))
+		mux.Handle(webhook.TaskProcessWebhookEvent, asynq.HandlerFunc(opts.WebhookEventHandler.ProcessTask))
 	}
 
 	return mux

@@ -37,6 +37,7 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const shutdownTimeout = 30 * time.Second
@@ -80,6 +81,7 @@ func main() {
 
 	// ── PostgreSQL ──────────────────────────────────────────────────────────
 	var (
+		pool                  *pgxpool.Pool
 		txnRepo               *repository.TransactionRepository
 		eventRepo             *repository.WebhookEventRepository
 		webhookLogRepo        *repository.WebhookRequestLogRepository
@@ -102,7 +104,8 @@ func main() {
 	if cfg.DatabaseDSN != "" {
 		runMigrations(cfg.DatabaseDSN)
 
-		pool, err := dbconn.ConnectPgx(cfg.DatabaseDSN)
+		var err error
+		pool, err = dbconn.ConnectPgx(cfg.DatabaseDSN)
 		if err != nil {
 			log.WithError(err).Fatal("failed to connect to postgres")
 		}
@@ -201,7 +204,7 @@ func main() {
 		return c.Status(http.StatusOK).JSON(common.Response{Status: http.StatusText(http.StatusOK)})
 	})
 
-	registerHealthHandler(app)
+	registerHealthHandler(app, pool, cfg.RedisURL)
 
 	// ── Biteship webhook — public, no API key check ─────────────────────────
 	shipping.RegisterWebhookHandler(apiRootGroup, cfg.BiteshipWebhookSignatureKey, cfg.BiteshipWebhookSignatureValue, shipmentRepo, tokokaryaClient, balanceSvc, log.StandardLogger())

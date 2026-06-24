@@ -22,27 +22,15 @@ type LogisticAggregator interface {
 	GetCourierList(ctx context.Context, couriers []string) ([]biteship.Courier, error)
 }
 
-// BalanceValidator validates and deducts the merchant's shipping balance around a shipment confirmation.
-type BalanceValidator interface {
-	// ValidateShippingConfirm returns an error (including account.ErrInsufficientBalance) when
-	// the merchant cannot cover the shipment cost. Returns nil when funds are available.
-	ValidateShippingConfirm(ctx context.Context, tenantID int64, orderNumber string, requiredAmount int64) error
-	// ConfirmHoldForOrder transitions an active shipping hold to confirmed, consuming the reserved funds.
-	// When no hold exists, deducts amount directly from available balance.
-	ConfirmHoldForOrder(ctx context.Context, tenantID int64, orderNumber string, amount int64) error
-	// AdjustShippingBalance applies a price correction (deducts if higher, credits if lower) and records audit entry.
-	AdjustShippingBalance(ctx context.Context, tenantID int64, oldPrice, newPrice int64, currency, orderNumber string) error
-}
-
 type ShippingService struct {
-	repo             LogisticAggregator
-	provider         provider.ShippingProvider
-	shipmentRepo     *repository.ShipmentRepository // may be nil when DB is not configured
-	balanceValidator BalanceValidator               // may be nil when account module is disabled
+	repo            LogisticAggregator
+	provider        provider.ShippingProvider
+	shipmentRepo    *repository.ShipmentRepository // may be nil when DB is not configured
+	accountManager  domain.AccountManager           // may be nil when account module is disabled
 }
 
-func NewShippingService(repo LogisticAggregator, prov provider.ShippingProvider, shipmentRepo *repository.ShipmentRepository, balanceValidator BalanceValidator) *ShippingService {
-	return &ShippingService{repo: repo, provider: prov, shipmentRepo: shipmentRepo, balanceValidator: balanceValidator}
+func NewShippingService(repo LogisticAggregator, prov provider.ShippingProvider, shipmentRepo *repository.ShipmentRepository, accountManager domain.AccountManager) *ShippingService {
+	return &ShippingService{repo: repo, provider: prov, shipmentRepo: shipmentRepo, accountManager: accountManager}
 }
 
 func (s *ShippingService) GetCourierList(ctx context.Context, couriers []string) ([]biteship.Courier, error) {
@@ -96,8 +84,8 @@ func (s *ShippingService) ConfirmShipment(ctx context.Context, tenantID int64, i
 		return shipment, nil
 	}
 
-	if s.balanceValidator != nil {
-		if err := s.balanceValidator.ValidateShippingConfirm(ctx, tenantID, shipment.OrderNumber, shipment.ShippingCost); err != nil {
+	if s.accountManager != nil {
+		if err := s.accountManager.ValidateShippingConfirm(ctx, tenantID, shipment.OrderNumber, shipment.ShippingCost); err != nil {
 			return nil, err
 		}
 	}
@@ -123,8 +111,8 @@ func (s *ShippingService) ConfirmShipment(ctx context.Context, tenantID int64, i
 
 	// Consume the shipping balance now that the provider has confirmed pickup.
 	// Confirms the hold if one was pre-created, or deducts directly from available balance.
-	if s.balanceValidator != nil {
-		if err := s.balanceValidator.ConfirmHoldForOrder(ctx, tenantID, shipment.OrderNumber, shipment.ShippingCost); err != nil {
+	if s.accountManager != nil {
+		if err := s.accountManager.ConfirmHoldForOrder(ctx, tenantID, shipment.OrderNumber, shipment.ShippingCost); err != nil {
 			// Non-fatal: shipment is confirmed; log but don't fail the request.
 			// The hold will stay in "holding" and can be reconciled manually.
 			_ = err
