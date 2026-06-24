@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/dengankarya/connector/common"
-	"github.com/dengankarya/connector/internal/payment/repository"
+	"github.com/dengankarya/connector/pkg/postgres"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
@@ -17,13 +17,13 @@ import (
 // Service handles all account-level operations: activity feed, shipping balance, holds, topups.
 type Service struct {
 	repo       *Repository
-	txRunner   *repository.TxRunner
+	txRunner   *postgres.TxRunner
 	dokuClient GatewayClient // nil when Doku is not configured
 	logger     *logrus.Logger
 }
 
 // NewService creates a Service. Pass nil for dokuClient when Doku is not configured.
-func NewService(repo *Repository, txRunner *repository.TxRunner, dokuClient GatewayClient, logger *logrus.Logger) *Service {
+func NewService(repo *Repository, txRunner *postgres.TxRunner, dokuClient GatewayClient, logger *logrus.Logger) *Service {
 	return &Service{repo: repo, txRunner: txRunner, dokuClient: dokuClient, logger: logger}
 }
 

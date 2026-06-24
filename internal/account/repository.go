@@ -7,41 +7,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dengankarya/connector/pkg/postgres"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// txCtxKey matches internal/payment/repository so this repository participates
-// in payment transactions when called from within RunInTx.
-type txCtxKey string
-
-const paymentTxKey txCtxKey = "pgx_tx"
-
-type dbtx interface {
-	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}
+// dbtx is the interface satisfied by both *pgxpool.Pool and pgx.Tx.
+type dbtx = postgres.DBTX
 
 func dbFromContext(ctx context.Context, pool *pgxpool.Pool) dbtx {
-	if tx, _ := ctx.Value(paymentTxKey).(pgx.Tx); tx != nil {
-		return tx
-	}
-	return pool
+	return postgres.DBFromContext(ctx, pool)
 }
 
 func isDuplicateKeyError(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+	return postgres.IsDuplicateKeyError(err)
 }
 
 func nilIfEmpty(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
+	return postgres.NilIfEmpty(s)
 }
 
 // Repository handles all account-level DB queries.

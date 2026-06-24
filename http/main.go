@@ -132,16 +132,15 @@ func main() {
 		webhookProc = webhook.NewProcessor(eventRepo, txnRepo, ledgerSvc, txRunner, tokokaryaClient, log.StandardLogger())
 		webhookHandler = webhook.NewAsynqHandler(webhookProc, log.StandardLogger())
 
-		// Asynq client needed for ReplayService — created before the section below.
-		_ = payoutRepo // used by PayoutService; wired separately if needed
+		// payoutRepo is constructed but not yet wired — PayoutService is complete,
+		// waiting for provider.PaymentProvider to implement Create/DispatchPayout methods.
+		_ = payoutRepo
 
 		paymentSvc = paymentservice.NewPaymentService(txnRepo, txRunner, ledgerSvc, balanceSvc, log.StandardLogger())
 
 		// Jobs
 		expireJob = jobs.NewExpirePaymentsJob(txnRepo, txRunner, log.StandardLogger())
 		retryJob = jobs.NewRetryWebhooksJob(nil, log.StandardLogger()) // replay wired after enqueuer init below
-		_ = expireJob
-		_ = retryJob
 	}
 
 	// ── asynq client (enqueuer) + embedded worker server ───────────────────
