@@ -51,6 +51,7 @@ type createSessionRequest struct {
 	SuccessReturnURL       string            `json:"success_return_url,omitempty"`
 	CancelReturnURL        string            `json:"cancel_return_url,omitempty"`
 	Metadata               map[string]string `json:"metadata,omitempty"`
+	ChannelProperties      map[string]any    `json:"channel_properties,omitempty"`
 }
 
 type createSessionResponse struct {
@@ -89,9 +90,9 @@ type getTransactionResponse struct {
 	ID               string `json:"id"`
 	SettlementStatus string `json:"settlement_status"` // "PENDING" | "SETTLED" | "EARLY_SETTLED" | null
 	Fee              struct {
-		XenditFee               float64 `json:"xendit_fee"`
-		ValueAddedTax           float64 `json:"value_added_tax"`
-		XenditWithholdingTax    float64 `json:"xendit_withholding_tax"`
+		XenditFee                float64 `json:"xendit_fee"`
+		ValueAddedTax            float64 `json:"value_added_tax"`
+		XenditWithholdingTax     float64 `json:"xendit_withholding_tax"`
 		ThirdPartyWithholdingTax float64 `json:"third_party_withholding_tax"`
 	} `json:"fee"`
 	// EstimatedSettlementTime is the projected date funds arrive in the platform account (ISO 8601).

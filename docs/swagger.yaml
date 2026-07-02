@@ -947,6 +947,10 @@ definitions:
         type: integer
       cancel_return_url:
         type: string
+      channel_properties:
+        additionalProperties: {}
+        description: channel-specific options (e.g. display_name, account_mobile_number)
+        type: object
       currency:
         type: string
       customer_email:
@@ -975,9 +979,6 @@ definitions:
         type: string
       platform_fee:
         type: integer
-      provider:
-        description: '"xendit" or "doku"; required when multiple providers are configured'
-        type: string
       result_url:
         description: optional; DOKU result page URL
         type: string

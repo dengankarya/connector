@@ -3534,6 +3534,11 @@ const docTemplate = `{
                 "cancel_return_url": {
                     "type": "string"
                 },
+                "channel_properties": {
+                    "description": "channel-specific options (e.g. display_name, account_mobile_number)",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
                 "currency": {
                     "type": "string"
                 },
@@ -3575,10 +3580,6 @@ const docTemplate = `{
                 },
                 "platform_fee": {
                     "type": "integer"
-                },
-                "provider": {
-                    "description": "\"xendit\" or \"doku\"; required when multiple providers are configured",
-                    "type": "string"
                 },
                 "result_url": {
                     "description": "optional; DOKU result page URL",

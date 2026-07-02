@@ -145,6 +145,7 @@ func (ctrl *paymentController) createPayment(c fiber.Ctx) error {
 		Metadata:           body.Metadata,
 		PaymentType:        body.PaymentType,
 		PaymentMethodTypes: body.PaymentMethodTypes,
+		ChannelProperties:  body.ChannelProperties,
 		ResultURL:          body.ResultURL,
 	})
 	if err != nil {

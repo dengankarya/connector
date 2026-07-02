@@ -293,7 +293,8 @@ type CreateProviderPaymentRequest struct {
 	Metadata           map[string]string
 	PaymentType        string
 	PaymentMethodTypes []string
-	ResultURL          string // result page URL for DOKU; empty = omitted
+	ChannelProperties  map[string]any // channel-specific optional params (Xendit)
+	ResultURL          string         // result page URL for DOKU; empty = omitted
 }
 
 // CreateProviderPayment creates a payment session at the given provider and persists
@@ -340,6 +341,7 @@ func (s *PaymentService) CreateProviderPayment(ctx context.Context, prov provide
 		GatewayAccountID:   gatewayAccountID,
 		PaymentType:        req.PaymentType,
 		PaymentMethodTypes: req.PaymentMethodTypes,
+		ChannelProperties:  req.ChannelProperties,
 		ResultURL:          req.ResultURL,
 	})
 	if err != nil {

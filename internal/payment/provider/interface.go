@@ -34,6 +34,10 @@ type CreateInvoiceRequest struct {
 	// PaymentMethodTypes restricts which payment channels appear on the checkout page.
 	// When empty, the provider shows all available methods.
 	PaymentMethodTypes []string
+	// ChannelProperties holds channel-specific optional parameters (e.g. display_name for
+	// virtual accounts, account_mobile_number for OVO, payer_name for INDOMARET/ALFAMART).
+	// Keys and valid values depend on the channel — see Xendit session channel properties docs.
+	ChannelProperties map[string]any
 	// ResultURL is provider-specific result page URL. Used by DOKU as callback_url_result. Optional.
 	ResultURL string
 }

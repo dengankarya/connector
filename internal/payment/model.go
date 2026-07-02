@@ -20,7 +20,8 @@ type CreatePaymentBody struct {
 	Metadata           map[string]string `json:"metadata"`
 	PaymentType        string            `json:"payment_type"`
 	PaymentMethodTypes []string          `json:"payment_method_types"`
-	ResultURL          string            `json:"result_url"` // optional; DOKU result page URL
+	ChannelProperties  map[string]any    `json:"channel_properties,omitempty"` // channel-specific options (e.g. display_name, account_mobile_number)
+	ResultURL          string            `json:"result_url"`                   // optional; DOKU result page URL
 }
 
 // CreateManualPaymentBody is the request body for POST /payments/manual.

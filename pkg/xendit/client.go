@@ -169,6 +169,7 @@ func (c *Client) CreateInvoice(ctx context.Context, req provider.CreateInvoiceRe
 		SuccessReturnURL:       req.SuccessReturnURL,
 		CancelReturnURL:        req.CancelReturnURL,
 		Metadata:               req.Metadata,
+		ChannelProperties:      req.ChannelProperties,
 	}
 
 	c.logger.WithFields(logrus.Fields{
