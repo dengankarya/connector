@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/hibiken/asynqmon"
-	"github.com/valyala/fasthttp/fasthttpadaptor"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/adaptor"
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/hibiken/asynq"
 	log "github.com/sirupsen/logrus"
@@ -192,12 +192,9 @@ func main() {
 	app.Use(requestLogger())
 
 	// Asynq queue monitor dashboard — no API key (protected at infra level via Cloudflare Access)
-	monHandler := asynqmon.New(asynqmon.Options{RootPath: "/monitor", RedisConnOpt: redisOpt})
-	fastMonHandler := fasthttpadaptor.NewFastHTTPHandler(monHandler)
-	app.All("/monitor{*}", func(c fiber.Ctx) error {
-		fastMonHandler(c.RequestCtx())
-		return nil
-	})
+	monFiberHandler := adaptor.HTTPHandler(asynqmon.New(asynqmon.Options{RootPath: "/monitor", RedisConnOpt: redisOpt}))
+	app.All("/monitor", monFiberHandler)
+	app.All("/monitor/*", monFiberHandler)
 
 	apiRootGroup := app.Group("/api/v1")
 
