@@ -222,29 +222,29 @@ func main() {
 		webhook.RegisterIngestHandler(apiRootGroup, "/webhook/xendit", xenditClient, paymentMod.EventRepo, paymentMod.WebhookLogRepo, asynqClient, log.StandardLogger())
 	}
 
-	// ── Authenticated routes ─────────────────────────────────────────────────
-	app.Use(authenticatedRequest(cfg))
+	// ── Authenticated routes — scoped to a group so /monitor stays public ────
+	authGroup := apiRootGroup.Group("", authenticatedRequest(cfg))
 
-	shipping.RegisterHandlers(apiRootGroup.Group("/shipments"), shippingMod.Service)
+	shipping.RegisterHandlers(authGroup.Group("/shipments"), shippingMod.Service)
 
 	if accountMod.Service != nil {
-		account.RegisterHandlers(apiRootGroup.Group("/accounts"), accountMod.Service, accountMod.XenditClient, adminRequest(cfg))
+		account.RegisterHandlers(authGroup.Group("/accounts"), accountMod.Service, accountMod.XenditClient, adminRequest(cfg))
 	}
 
 	wilayahClient := wilayah.NewClient(cfg.WilayahBaseURL)
 	cachedWilayah := region.NewCachedClient(wilayahClient)
 	regionSvc := region.NewRegionService(cachedWilayah)
-	region.RegisterHandlers(apiRootGroup.Group("/regions"), regionSvc)
+	region.RegisterHandlers(authGroup.Group("/regions"), regionSvc)
 
 	geoapifyClient := geoapify.NewClient(cfg.GeoapifyAPIKey, cfg.GeoapifyBaseURL)
 	cachedGeocoder := geocoding.NewCachedGeocoder(geoapifyClient)
 	geocodingService := geocoding.NewService(cachedGeocoder, log.StandardLogger())
-	geocoding.RegisterHandlers(apiRootGroup.Group("/geocoding"), geocodingService)
+	geocoding.RegisterHandlers(authGroup.Group("/geocoding"), geocodingService)
 
 	// Payment module endpoints (requires DB).
 	if paymentMod.PaymentService != nil {
 		payment.RegisterPaymentHandlers(
-			apiRootGroup.Group("/payments"),
+			authGroup.Group("/payments"),
 			paymentMod.PaymentService,
 			paymentMod.Providers,
 			asynqClient,
