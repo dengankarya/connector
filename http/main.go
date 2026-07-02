@@ -8,6 +8,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hibiken/asynqmon"
+	"github.com/valyala/fasthttp/fasthttpadaptor"
+
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/hibiken/asynq"
@@ -146,7 +149,7 @@ func main() {
 	// Xendit settlement sync job — created directly here (needs xenditClient which lives in main).
 	var syncXenditJob *jobs.SyncXenditSettlementsJob
 	if xenditClient != nil && paymentMod.TransactionRepo != nil {
-		syncXenditJob = jobs.NewSyncXenditSettlementsJob(paymentMod.TransactionRepo, paymentMod.TxRunner, xenditClient, log.StandardLogger())
+		syncXenditJob = jobs.NewSyncXenditSettlementsJob(paymentMod.TransactionRepo, paymentMod.TxRunner, paymentMod.LedgerService, xenditClient, log.StandardLogger())
 	}
 	go func() {
 		if err := workerServer.Start(workerMux); err != nil {
@@ -169,7 +172,7 @@ func main() {
 		})
 
 		if syncXenditJob != nil {
-			_, _ = scheduler.Register("*/30 * * * *", asynq.NewTask(worker.TaskSyncXenditSettlements, nil))
+			_, _ = scheduler.Register("0 */6 * * *", asynq.NewTask(worker.TaskSyncXenditSettlements, nil))
 			workerMux.HandleFunc(worker.TaskSyncXenditSettlements, func(ctx context.Context, t *asynq.Task) error {
 				return syncXenditJob.Run(ctx)
 			})
@@ -187,6 +190,15 @@ func main() {
 	app.Get("/swagger/*", serveSwaggerUI)
 	app.Use(cors.New(cors.ConfigDefault))
 	app.Use(requestLogger())
+
+	// Asynq queue monitor dashboard — available at /monitor
+	monHandler := asynqmon.New(asynqmon.Options{RootPath: "/monitor", RedisConnOpt: redisOpt})
+	fastMonHandler := fasthttpadaptor.NewFastHTTPHandler(monHandler)
+	app.All("/monitor{*}", func(c fiber.Ctx) error {
+		fastMonHandler(c.RequestCtx())
+		return nil
+	})
+
 	apiRootGroup := app.Group("/api/v1")
 
 	app.Get("/", func(c fiber.Ctx) error {

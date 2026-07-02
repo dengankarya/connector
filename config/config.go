@@ -10,8 +10,8 @@ import (
 )
 
 type Configuration struct {
-	ENV            string `env:"ENV"`
-	PORT           string `env:"PORT"`
+	ENV  string `env:"ENV"`
+	PORT string `env:"PORT"`
 	AllowedAPIKeys string `env:"ALLOWED_API_KEYS"`
 	AdminAPIKeys   string `env:"ADMIN_API_KEYS"` // operator-only endpoints (topup, payouts, etc.)
 

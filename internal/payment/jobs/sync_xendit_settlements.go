@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/dengankarya/connector/internal/payment/domain"
+	"github.com/dengankarya/connector/internal/payment/ledger"
 	"github.com/dengankarya/connector/internal/payment/provider"
 	"github.com/dengankarya/connector/internal/payment/repository"
 	"github.com/sirupsen/logrus"
@@ -19,10 +20,11 @@ type XenditTransactionFetcher interface {
 }
 
 // SyncXenditSettlementsJob polls Xendit for settlement status on paid transactions.
-// Run every 30 minutes via the asynq periodic task scheduler.
+// Run every 6 hours via the asynq periodic task scheduler.
 type SyncXenditSettlementsJob struct {
 	txnRepo  *repository.TransactionRepository
 	txRunner *repository.TxRunner
+	ledger   *ledger.Service
 	client   XenditTransactionFetcher
 	logger   *logrus.Logger
 }
@@ -31,10 +33,11 @@ type SyncXenditSettlementsJob struct {
 func NewSyncXenditSettlementsJob(
 	txnRepo *repository.TransactionRepository,
 	txRunner *repository.TxRunner,
+	ledgerSvc *ledger.Service,
 	client XenditTransactionFetcher,
 	logger *logrus.Logger,
 ) *SyncXenditSettlementsJob {
-	return &SyncXenditSettlementsJob{txnRepo: txnRepo, txRunner: txRunner, client: client, logger: logger}
+	return &SyncXenditSettlementsJob{txnRepo: txnRepo, txRunner: txRunner, ledger: ledgerSvc, client: client, logger: logger}
 }
 
 // Run fetches one batch of paid Xendit transactions and transitions settled ones to 'settled'.
@@ -42,6 +45,8 @@ func NewSyncXenditSettlementsJob(
 func (j *SyncXenditSettlementsJob) Run(ctx context.Context) error {
 	start := time.Now()
 	log := j.logger.WithField("component", "sync_xendit_settlements_job")
+
+	log.Info("sync xendit settlements: job started")
 
 	txns, err := j.txnRepo.ListPaidByProvider(ctx, "xendit", syncXenditSettlementsBatchSize)
 	if err != nil {
@@ -93,6 +98,10 @@ func (j *SyncXenditSettlementsJob) Run(ctx context.Context) error {
 			locked.ThirdPartyWHT = provTxn.ThirdPartyWHT
 			locked.EstimatedSettlementTime = provTxn.EstimatedSettlementTime
 
+			if err := j.ledger.RecordSettlement(txCtx, locked, nil); err != nil {
+				return err
+			}
+
 			return j.txnRepo.Update(txCtx, locked)
 		})
 
@@ -105,6 +114,16 @@ func (j *SyncXenditSettlementsJob) Run(ctx context.Context) error {
 			failed++
 			continue
 		}
+
+		log.WithFields(logrus.Fields{
+			"transaction_id":      txn.ID,
+			"tenant_id":           txn.TenantID,
+			"order_number":        txn.OrderNumber,
+			"provider_payment_id": txn.ProviderPaymentID,
+			"amount":              txn.Amount,
+			"xendit_fee":          provTxn.XenditFee,
+			"vat":                 provTxn.VAT,
+		}).Info("sync xendit settlements: transaction settled")
 		settled++
 	}
 
