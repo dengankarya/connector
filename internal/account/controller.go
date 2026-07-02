@@ -59,6 +59,7 @@ func RegisterHandlers(mux fiber.Router, svc *Service, xenditClient XenditGateway
 	if xenditClient != nil {
 		mux.Post("/gateway/xendit/sub-account", ctrl.createXenditSubAccount)
 		mux.Get("/gateway/xendit/sub-account/:id", ctrl.getXenditAccount)
+		mux.Post("/gateway/xendit/account-holder", ctrl.createXenditAccountHolder)
 	}
 }
 
@@ -620,6 +621,68 @@ func (ctrl *controller) getXenditAccount(c fiber.Ctx) error {
 		return internalError(c, err)
 	}
 	return c.JSON(common.Response{Status: "OK", Data: info})
+}
+
+// createXenditAccountHolder godoc
+//
+//	@Summary		Create and link Xendit account holder
+//	@Description	Submits KYC business details for the tenant's Xendit sub-account and links them. This starts the verification flow (REGISTERED → AWAITING_DOCS → PENDING_VERIFICATION → LIVE). Call this after creating the sub-account.
+//	@Tags			Account
+//	@Accept			json
+//	@Produce		json
+//	@Param			X-Tenant-ID	header		int64					true	"Tenant ID"
+//	@Param			body		body		account.CreateAccountHolderRequest	true	"KYC business details"
+//	@Success		200			{object}	common.Response			"Account holder created and linked"
+//	@Failure		400			{object}	common.Response			"Invalid request"
+//	@Failure		404			{object}	common.Response			"No Xendit sub-account found for this tenant"
+//	@Failure		503			{object}	common.Response			"Xendit not configured"
+//	@Failure		500			{object}	common.Response			"Internal server error"
+//	@Security		ApiKeyAuth
+//	@Router			/accounts/gateway/xendit/account-holder [post]
+func (ctrl *controller) createXenditAccountHolder(c fiber.Ctx) error {
+	tenantID := mustParseTenantID(c)
+	if tenantID == 0 {
+		return badRequest(c, "X-Tenant-ID header is required")
+	}
+
+	var req CreateAccountHolderRequest
+	if err := c.Bind().JSON(&req); err != nil {
+		return badRequest(c, err.Error())
+	}
+	if req.BusinessDetail.LegalName == "" {
+		return badRequest(c, "business_detail.legal_name is required")
+	}
+	if req.BusinessDetail.Type == "" {
+		return badRequest(c, "business_detail.type is required")
+	}
+	if req.BusinessDetail.CountryOfOperation == "" {
+		req.BusinessDetail.CountryOfOperation = "ID"
+	}
+	if req.Email == "" {
+		return badRequest(c, "email is required")
+	}
+	if req.PhoneNumber == "" {
+		return badRequest(c, "phone_number is required")
+	}
+	if req.Address.StreetLine1 == "" {
+		return badRequest(c, "address.street_line1 is required")
+	}
+
+	if err := ctrl.svc.CreateAndLinkAccountHolder(c.Context(), tenantID, req); err != nil {
+		switch {
+		case errors.Is(err, ErrGatewayNotConfigured):
+			return c.Status(http.StatusServiceUnavailable).JSON(common.Response{
+				Status: "Service Unavailable", Error: err.Error(),
+			})
+		case errors.Is(err, ErrGatewayAccountNotFound):
+			return c.Status(http.StatusNotFound).JSON(common.Response{
+				Status: "Not Found", Error: "no Xendit sub-account found for this tenant — create one first",
+			})
+		default:
+			return internalError(c, err)
+		}
+	}
+	return c.JSON(common.Response{Status: "OK", Data: map[string]string{"message": "account holder created and linked — verification flow started"}})
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────

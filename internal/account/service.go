@@ -255,6 +255,37 @@ func (s *Service) CreateXenditSubAccount(ctx context.Context, req CreateXenditSu
 	return acct, nil
 }
 
+// CreateAndLinkAccountHolder creates a Xendit account holder for the tenant's sub-account
+// and immediately patches the sub-account to link them. This starts the verification flow:
+// REGISTERED → AWAITING_DOCS → PENDING_VERIFICATION → LIVE.
+func (s *Service) CreateAndLinkAccountHolder(ctx context.Context, tenantID int64, req CreateAccountHolderRequest) error {
+	if s.xenditClient == nil {
+		return ErrGatewayNotConfigured
+	}
+
+	acct, err := s.repo.GetGatewayAccountByTenantID(ctx, tenantID, "xendit")
+	if err != nil {
+		return ErrGatewayAccountNotFound
+	}
+
+	accountHolderID, err := s.xenditClient.CreateAccountHolder(ctx, acct.GatewayAccountID, req)
+	if err != nil {
+		return fmt.Errorf("create account holder: %w", err)
+	}
+
+	if err := s.xenditClient.LinkAccountHolder(ctx, acct.GatewayAccountID, accountHolderID); err != nil {
+		return fmt.Errorf("link account holder: %w", err)
+	}
+
+	s.logger.WithFields(logrus.Fields{
+		"component":         "account",
+		"tenant_id":         tenantID,
+		"sub_account_id":    acct.GatewayAccountID,
+		"account_holder_id": accountHolderID,
+	}).Info("xendit account holder created and linked")
+	return nil
+}
+
 // SendGatewayPayoutRequest is the input for disbursing funds via the gateway.
 type SendGatewayPayoutRequest struct {
 	TenantID          int64

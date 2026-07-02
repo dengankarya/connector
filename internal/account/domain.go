@@ -215,6 +215,42 @@ type XenditGatewayClient interface {
 	GatewayClient
 	// GetAccount fetches the current account status and public profile from Xendit.
 	GetAccount(ctx context.Context, accountID string) (*XenditAccountInfo, error)
+	// CreateAccountHolder submits KYC business details for a sub-account.
+	// Returns the Xendit account_holder_id on success.
+	CreateAccountHolder(ctx context.Context, subAccountID string, req CreateAccountHolderRequest) (accountHolderID string, err error)
+	// LinkAccountHolder links an account holder to a sub-account via PATCH /v2/accounts/{id}.
+	// This must be called after CreateAccountHolder to begin the verification flow.
+	LinkAccountHolder(ctx context.Context, subAccountID, accountHolderID string) error
+}
+
+// AccountHolderBusinessDetail is the KYC business information for CreateAccountHolder.
+type AccountHolderBusinessDetail struct {
+	Type               string `json:"type"`                          // CORPORATION | PARTNERSHIP | SOLE_PROPRIETORSHIP | INDIVIDUAL
+	LegalName          string `json:"legal_name"`
+	TradingName        string `json:"trading_name,omitempty"`
+	Description        string `json:"description,omitempty"`
+	IndustryCategory   string `json:"industry_category,omitempty"`
+	DateOfRegistration string `json:"date_of_registration,omitempty"` // YYYY-MM-DD
+	CountryOfOperation string `json:"country_of_operation"`           // "ID"
+}
+
+// AccountHolderAddress is the registered address for CreateAccountHolder.
+type AccountHolderAddress struct {
+	Country       string `json:"country"`
+	City          string `json:"city"`
+	ProvinceState string `json:"province_state,omitempty"`
+	StreetLine1   string `json:"street_line1"`
+	PostalCode    string `json:"postal_code"`
+}
+
+// CreateAccountHolderRequest is the input for CreateAccountHolder.
+// Defined here (not in pkg/xendit) so the interface can reference it without circular imports.
+type CreateAccountHolderRequest struct {
+	BusinessDetail AccountHolderBusinessDetail `json:"business_detail"`
+	Address        AccountHolderAddress        `json:"address"`
+	Email          string                      `json:"email"`
+	PhoneNumber    string                      `json:"phone_number"`
+	WebsiteURL     string                      `json:"website_url,omitempty"`
 }
 
 // XenditAccountInfo holds the live account status returned by Xendit's GET /v2/accounts/{id}.

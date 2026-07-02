@@ -101,37 +101,14 @@ type getTransactionResponse struct {
 	Currency                string `json:"currency"`
 }
 
-// ── Account holder (future KYC) ───────────────────────────────────────────────
+// ── Account holder & patch ────────────────────────────────────────────────────
 
-// CreateAccountHolderRequest is the input for POST /account_holders.
-// Required for KYC verification to unlock regulated capabilities (Cards, USD).
-// Not required for basic Payment Session processing.
-type CreateAccountHolderRequest struct {
-	BusinessDetail struct {
-		Type               string `json:"type"` // CORPORATION | PARTNERSHIP | SOLE_PROPRIETORSHIP | INDIVIDUAL
-		LegalName          string `json:"legal_name"`
-		TradingName        string `json:"trading_name"`
-		Description        string `json:"description"`
-		IndustryCategory   string `json:"industry_category"`
-		DateOfRegistration string `json:"date_of_registration"` // YYYY-MM-DD
-		CountryOfOperation string `json:"country_of_operation"` // "ID"
-	} `json:"business_detail"`
-	Address struct {
-		Country       string `json:"country"`
-		City          string `json:"city"`
-		ProvinceState string `json:"province_state"`
-		StreetLine1   string `json:"street_line1"`
-		PostalCode    string `json:"postal_code"`
-	} `json:"address"`
-	Email       string `json:"email"`
-	PhoneNumber string `json:"phone_number"`
-	WebsiteURL  string `json:"website_url,omitempty"`
+// createAccountHolderResponse is returned by POST /account_holders.
+type createAccountHolderResponse struct {
+	ID string `json:"id"`
 }
 
-// CreateAccountHolderResponse is the response from POST /account_holders.
-type CreateAccountHolderResponse struct {
-	ID  string `json:"id"`
-	KYC struct {
-		Status string `json:"status"` // "NOT_VERIFIED" | "VERIFIED"
-	} `json:"kyc"`
+// patchAccountRequest links an account holder to a sub-account via PATCH /v2/accounts/{id}.
+type patchAccountRequest struct {
+	AccountHolderID string `json:"account_holder_id"`
 }

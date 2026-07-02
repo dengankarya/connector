@@ -130,15 +130,24 @@ func (c *Client) GetAccount(ctx context.Context, accountID string) (*account.Xen
 	return info, nil
 }
 
-// CreateAccountHolder submits KYC information for a sub-account.
-// Required to unlock regulated capabilities (Cards, USD, recurring).
-// Not required for basic Payment Session processing.
-func (c *Client) CreateAccountHolder(ctx context.Context, forUserID string, req CreateAccountHolderRequest) (*CreateAccountHolderResponse, error) {
-	var resp CreateAccountHolderResponse
-	if err := c.do(ctx, http.MethodPost, "/account_holders", forUserID, req, &resp); err != nil {
-		return nil, fmt.Errorf("xendit: create account holder: %w", err)
+// CreateAccountHolder submits KYC business details for a sub-account and returns the account_holder_id.
+// Call LinkAccountHolder next to bind the holder to the sub-account and start the verification flow.
+func (c *Client) CreateAccountHolder(ctx context.Context, subAccountID string, req account.CreateAccountHolderRequest) (string, error) {
+	var resp createAccountHolderResponse
+	if err := c.do(ctx, http.MethodPost, "/account_holders", subAccountID, req, &resp); err != nil {
+		return "", fmt.Errorf("xendit: create account holder: %w", err)
 	}
-	return &resp, nil
+	return resp.ID, nil
+}
+
+// LinkAccountHolder patches the sub-account to associate the given account holder.
+// This triggers Xendit's verification flow (REGISTERED → AWAITING_DOCS → PENDING_VERIFICATION → LIVE).
+func (c *Client) LinkAccountHolder(ctx context.Context, subAccountID, accountHolderID string) error {
+	body := patchAccountRequest{AccountHolderID: accountHolderID}
+	if err := c.do(ctx, http.MethodPatch, "/v2/accounts/"+subAccountID, "", body, nil); err != nil {
+		return fmt.Errorf("xendit: link account holder: %w", err)
+	}
+	return nil
 }
 
 // ── PaymentProvider implementation ───────────────────────────────────────────
