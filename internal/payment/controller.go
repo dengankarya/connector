@@ -3,6 +3,7 @@ package payment
 import (
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -21,22 +22,22 @@ import (
 // ─── Payment module controller ───────────────────────────────────────────────
 
 type paymentController struct {
-	svc      *paymentservice.PaymentService
-	provider provider.PaymentProvider // nil when no provider is configured
-	enqueuer *asynq.Client
-	logger   *logrus.Logger
+	svc       *paymentservice.PaymentService
+	providers map[string]provider.PaymentProvider // keyed by provider name (e.g. "xendit", "doku")
+	enqueuer  *asynq.Client
+	logger    *logrus.Logger
 }
 
 // RegisterPaymentHandlers registers the payment transaction endpoints.
-// prov may be nil — the POST / (create payment) route is only registered when prov is non-nil.
+// providers is a map of configured payment providers; POST / is only registered when at least one is present.
 func RegisterPaymentHandlers(
 	mux fiber.Router,
 	svc *paymentservice.PaymentService,
-	prov provider.PaymentProvider,
+	providers map[string]provider.PaymentProvider,
 	enqueuer *asynq.Client,
 	logger *logrus.Logger,
 ) {
-	ctrl := &paymentController{svc: svc, provider: prov, enqueuer: enqueuer, logger: logger}
+	ctrl := &paymentController{svc: svc, providers: providers, enqueuer: enqueuer, logger: logger}
 	mux.Get("/transactions", ctrl.listTransactions)
 
 	mux.Post("/cancel-schedule", ctrl.scheduleOrderCancellation)
@@ -44,7 +45,7 @@ func RegisterPaymentHandlers(
 	mux.Post("/manual/:id/confirm", ctrl.confirmManualPayment)
 	mux.Get("/:id", ctrl.getPayment)
 
-	if prov != nil {
+	if len(providers) > 0 {
 		mux.Post("/", ctrl.createPayment)
 	}
 }
@@ -105,7 +106,28 @@ func (ctrl *paymentController) createPayment(c fiber.Ctx) error {
 		})
 	}
 
-	txn, err := ctrl.svc.CreateProviderPayment(c.Context(), ctrl.provider, paymentservice.CreateProviderPaymentRequest{
+	// Provider is determined by ENV config (which API keys are set at startup).
+	// If exactly one provider is configured, use it. If multiple, pick the first alphabetically.
+	var prov provider.PaymentProvider
+	if len(ctrl.providers) == 1 {
+		for _, p := range ctrl.providers {
+			prov = p
+		}
+	} else if len(ctrl.providers) > 1 {
+		names := make([]string, 0, len(ctrl.providers))
+		for n := range ctrl.providers {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		prov = ctrl.providers[names[0]]
+	}
+	if prov == nil {
+		return c.Status(http.StatusServiceUnavailable).JSON(common.Response{
+			Status: "Service Unavailable", Error: "no payment provider configured",
+		})
+	}
+
+	txn, err := ctrl.svc.CreateProviderPayment(c.Context(), prov, paymentservice.CreateProviderPaymentRequest{
 		TenantID:           tenantID,
 		OrderNumber:        body.OrderNumber,
 		IdempotencyKey:     body.IdempotencyKey,

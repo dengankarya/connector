@@ -8,27 +8,31 @@ import (
 
 // Module contains all account-related services.
 type Module struct {
-	Service *Service
+	Service      *Service
+	XenditClient XenditGatewayClient // exposed so RegisterHandlers can serve the GetAccount route
 }
 
 // NewModule constructs the account service.
-// gatewayClient can be nil when Doku is not configured.
+// dokuClient and xenditClient may be nil when the respective gateway is not configured.
 func NewModule(
 	pool *pgxpool.Pool,
 	txRunner *postgres.TxRunner,
-	gatewayClient GatewayClient,
+	dokuClient GatewayClient,
+	xenditClient XenditGatewayClient,
 	logger *logrus.Logger,
 ) *Module {
 	if pool == nil {
 		return &Module{
-			Service: NewService(nil, nil, nil, logger),
+			Service:      NewService(nil, nil, nil, nil, logger),
+			XenditClient: xenditClient,
 		}
 	}
 
 	repo := NewRepository(pool)
-	service := NewService(repo, txRunner, gatewayClient, logger)
+	service := NewService(repo, txRunner, dokuClient, xenditClient, logger)
 
 	return &Module{
-		Service: service,
+		Service:      service,
+		XenditClient: xenditClient,
 	}
 }

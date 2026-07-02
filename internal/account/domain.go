@@ -209,6 +209,28 @@ type GatewayClient interface {
 	SendPayout(ctx context.Context, gatewayAccountID string, amount int64, invoiceNumber, bankCode, bankAccountNumber, bankAccountName string) (status string, err error)
 }
 
+// XenditGatewayClient extends GatewayClient with Xendit-specific account management.
+// Implemented structurally by *xendit.Client.
+type XenditGatewayClient interface {
+	GatewayClient
+	// GetAccount fetches the current account status and public profile from Xendit.
+	GetAccount(ctx context.Context, accountID string) (*XenditAccountInfo, error)
+}
+
+// XenditAccountInfo holds the live account status returned by Xendit's GET /v2/accounts/{id}.
+// Defined here (not in pkg/xendit) so pkg/xendit can import internal/account without
+// introducing a circular dependency (internal/account does not import pkg/xendit).
+type XenditAccountInfo struct {
+	ID            string `json:"id"`
+	Type          string `json:"type"`
+	Email         string `json:"email"`
+	Status        string `json:"status"`
+	PublicProfile struct {
+		Name    string `json:"name"`
+		Country string `json:"country"`
+	} `json:"public_profile"`
+}
+
 // ─── Request body types (used by Swagger) ────────────────────────────────────
 
 // TopupBody is the request body for POST /accounts/balance/topup.

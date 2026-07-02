@@ -24,7 +24,7 @@ var ErrInvalidCursor = errors.New("invalid cursor")
 // GatewayAccountFinder resolves a tenant's payment gateway sub-account ID.
 // account.Service satisfies this interface.
 type GatewayAccountFinder interface {
-	GetGatewayAccountIDForTenant(ctx context.Context, tenantID int64) (string, error)
+	GetGatewayAccountIDForTenant(ctx context.Context, tenantID int64, provider string) (string, error)
 }
 
 // TransactionStore abstracts payment transaction persistence.
@@ -320,7 +320,7 @@ func (s *PaymentService) CreateProviderPayment(ctx context.Context, prov provide
 
 	var gatewayAccountID string
 	if s.gatewayFinder != nil {
-		if id, err := s.gatewayFinder.GetGatewayAccountIDForTenant(ctx, req.TenantID); err == nil {
+		if id, err := s.gatewayFinder.GetGatewayAccountIDForTenant(ctx, req.TenantID, prov.ProviderName()); err == nil {
 			gatewayAccountID = id
 		}
 	}

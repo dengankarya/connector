@@ -27,7 +27,7 @@ type Module struct {
 	PaymentService   *paymentservice.PaymentService
 	ExpireJob        *jobs.ExpirePaymentsJob
 	RetryJob         *jobs.RetryWebhooksJob
-	Provider         provider.PaymentProvider
+	Providers        map[string]provider.PaymentProvider // keyed by provider name ("doku", "xendit")
 }
 
 // NewModule constructs the payment module (excluding jobs that need external clients).
@@ -35,13 +35,13 @@ type Module struct {
 func NewModule(
 	pool *pgxpool.Pool,
 	enqueuer *asynq.Client,
-	dokuProvider provider.PaymentProvider,
+	providers map[string]provider.PaymentProvider,
 	accountFinder paymentservice.GatewayAccountFinder,
 	forwarder webhook.PaymentForwarder,
 	logger *logrus.Logger,
 ) *Module {
 	if pool == nil {
-		return &Module{Provider: dokuProvider}
+		return &Module{Providers: providers}
 	}
 
 	// Repositories
@@ -83,6 +83,6 @@ func NewModule(
 		PaymentService:   paymentSvc,
 		ExpireJob:        expireJob,
 		RetryJob:         retryJob,
-		Provider:         dokuProvider,
+		Providers:        providers,
 	}
 }

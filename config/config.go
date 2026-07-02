@@ -36,6 +36,10 @@ type Configuration struct {
 	DokuSecretKey string `env:"DOKU_SECRET_KEY"`
 	DokuBaseURL   string `env:"DOKU_BASE_URL" envDefault:"https://api-sandbox.doku.com"`
 
+	XenditAPIKey        string `env:"XENDIT_API_KEY"`
+	XenditBaseURL       string `env:"XENDIT_BASE_URL" envDefault:"https://api.xendit.co"`
+	XenditCallbackToken string `env:"XENDIT_CALLBACK_TOKEN"`
+
 	WebhookBaseURL string `env:"WEBHOOK_BASE_URL"` // base URL for webhook notifications (e.g. https://connector.example.com)
 }
 

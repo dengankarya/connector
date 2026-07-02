@@ -4,23 +4,23 @@ import "time"
 
 // CreatePaymentBody is the request body for POST /payments.
 type CreatePaymentBody struct {
-	OrderNumber            string            `json:"order_number"`
-	IdempotencyKey         string            `json:"idempotency_key"`
-	Amount                 int64             `json:"amount"`
-	Currency               string            `json:"currency"`
-	PlatformFee            int64             `json:"platform_fee"`
-	ShippingFee            int64             `json:"shipping_fee"`
-	SuccessReturnURL       string            `json:"success_return_url"`
-	CancelReturnURL        string            `json:"cancel_return_url"`
-	Description            string            `json:"description"`
-	CustomerName           string            `json:"customer_name"`
-	CustomerEmail          string            `json:"customer_email"`
-	CustomerMobile         string            `json:"customer_mobile"`
-	ExpiresAt              *time.Time        `json:"expires_at"`
-	Metadata               map[string]string `json:"metadata"`
-	PaymentType        string   `json:"payment_type"`
-	PaymentMethodTypes []string `json:"payment_method_types"`
-	ResultURL          string   `json:"result_url"` // optional; DOKU result page URL
+	OrderNumber        string            `json:"order_number"`
+	IdempotencyKey     string            `json:"idempotency_key"`
+	Amount             int64             `json:"amount"`
+	Currency           string            `json:"currency"`
+	PlatformFee        int64             `json:"platform_fee"`
+	ShippingFee        int64             `json:"shipping_fee"`
+	SuccessReturnURL   string            `json:"success_return_url"`
+	CancelReturnURL    string            `json:"cancel_return_url"`
+	Description        string            `json:"description"`
+	CustomerName       string            `json:"customer_name"`
+	CustomerEmail      string            `json:"customer_email"`
+	CustomerMobile     string            `json:"customer_mobile"`
+	ExpiresAt          *time.Time        `json:"expires_at"`
+	Metadata           map[string]string `json:"metadata"`
+	PaymentType        string            `json:"payment_type"`
+	PaymentMethodTypes []string          `json:"payment_method_types"`
+	ResultURL          string            `json:"result_url"` // optional; DOKU result page URL
 }
 
 // CreateManualPaymentBody is the request body for POST /payments/manual.

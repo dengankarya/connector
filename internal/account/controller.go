@@ -39,8 +39,10 @@ var (
 //	POST /accounts/holds/:id/release          cancel order, return hold to available
 //	POST /accounts/gateway/sub-account        provision Doku sub-account for tenant
 //	POST /accounts/gateway/payout             send payout via Doku  [admin only]
-func RegisterHandlers(mux fiber.Router, svc *Service, adminOnly fiber.Handler) {
-	ctrl := &controller{svc: svc}
+//	POST /accounts/gateway/xendit/sub-account provision Xendit MANAGED sub-account for tenant
+//	GET  /accounts/gateway/xendit/sub-account/:id fetch live Xendit account status
+func RegisterHandlers(mux fiber.Router, svc *Service, xenditClient XenditGatewayClient, adminOnly fiber.Handler) {
+	ctrl := &controller{svc: svc, xenditClient: xenditClient}
 
 	mux.Get("/transactions", ctrl.listTransactions)
 	mux.Get("/transactions/:id", ctrl.getTransaction)
@@ -53,10 +55,16 @@ func RegisterHandlers(mux fiber.Router, svc *Service, adminOnly fiber.Handler) {
 	mux.Post("/holds/:id/release", ctrl.releaseHold)
 	mux.Post("/gateway/sub-account", ctrl.createGatewaySubAccount)
 	mux.Post("/gateway/payout", adminOnly, ctrl.sendGatewayPayout)
+
+	if xenditClient != nil {
+		mux.Post("/gateway/xendit/sub-account", ctrl.createXenditSubAccount)
+		mux.Get("/gateway/xendit/sub-account/:id", ctrl.getXenditAccount)
+	}
 }
 
 type controller struct {
-	svc *Service
+	svc          *Service
+	xenditClient XenditGatewayClient // nil when Xendit not configured
 }
 
 // ─── Transactions ─────────────────────────────────────────────────────────────
@@ -526,6 +534,92 @@ func (ctrl *controller) sendGatewayPayout(c fiber.Ctx) error {
 		return internalError(c, err)
 	}
 	return c.JSON(common.Response{Status: "OK", Data: map[string]string{"status": status}})
+}
+
+// ─── Xendit gateway ───────────────────────────────────────────────────────────
+
+// createXenditSubAccount godoc
+//
+//	@Summary		Provision Xendit MANAGED sub-account
+//	@Description	Creates a Xendit MANAGED sub-account for the tenant and registers our payment webhook URL on it. The merchant receives an invitation email from Xendit to complete sign-up. Idempotent — returns 409 if an account already exists for this tenant.
+//	@Tags			Account
+//	@Accept			json
+//	@Produce		json
+//	@Param			X-Tenant-ID	header		int64											true	"Tenant ID"
+//	@Param			body		body		account.CreateGatewaySubAccountBody				true	"Sub-account details"
+//	@Success		201			{object}	common.Response{data=account.GatewayAccount}	"Sub-account created"
+//	@Failure		400			{object}	common.Response									"Invalid request"
+//	@Failure		409			{object}	common.Response									"Xendit account already exists for this tenant"
+//	@Failure		503			{object}	common.Response									"Xendit not configured"
+//	@Failure		500			{object}	common.Response									"Internal server error"
+//	@Security		ApiKeyAuth
+//	@Router			/accounts/gateway/xendit/sub-account [post]
+func (ctrl *controller) createXenditSubAccount(c fiber.Ctx) error {
+	tenantID := mustParseTenantID(c)
+	if tenantID == 0 {
+		return badRequest(c, "X-Tenant-ID header is required")
+	}
+
+	var body CreateGatewaySubAccountBody
+	if err := c.Bind().JSON(&body); err != nil {
+		return badRequest(c, err.Error())
+	}
+	if body.Email == "" {
+		return badRequest(c, "email is required")
+	}
+	if body.Name == "" {
+		return badRequest(c, "name is required")
+	}
+
+	acct, err := ctrl.svc.CreateXenditSubAccount(c.Context(), CreateXenditSubAccountRequest{
+		TenantID: tenantID,
+		Email:    body.Email,
+		Name:     body.Name,
+	})
+	if err != nil {
+		if errors.Is(err, ErrGatewayNotConfigured) {
+			return c.Status(http.StatusServiceUnavailable).JSON(common.Response{
+				Status: "Service Unavailable", Error: err.Error(),
+			})
+		}
+		if errors.Is(err, ErrGatewayAccountExists) {
+			return c.Status(http.StatusConflict).JSON(common.Response{
+				Status: "Conflict", Error: err.Error(),
+			})
+		}
+		return internalError(c, err)
+	}
+	return c.Status(http.StatusCreated).JSON(common.Response{Status: "Created", Data: acct})
+}
+
+// getXenditAccount godoc
+//
+//	@Summary		Get Xendit sub-account status
+//	@Description	Fetches the live account status and public profile from Xendit by account ID. Useful for tracking merchant onboarding progress (INVITED → REGISTERED → AWAITING_DOCS → PENDING_VERIFICATION → LIVE).
+//	@Tags			Account
+//	@Produce		json
+//	@Param			X-Tenant-ID	header		int64											true	"Tenant ID"
+//	@Param			id			path		string											true	"Xendit account ID"
+//	@Success		200			{object}	common.Response{data=account.XenditAccountInfo}	"Account info"
+//	@Failure		400			{object}	common.Response									"Missing tenant ID"
+//	@Failure		500			{object}	common.Response									"Internal server error"
+//	@Security		ApiKeyAuth
+//	@Router			/accounts/gateway/xendit/sub-account/{id} [get]
+func (ctrl *controller) getXenditAccount(c fiber.Ctx) error {
+	tenantID := mustParseTenantID(c)
+	if tenantID == 0 {
+		return badRequest(c, "X-Tenant-ID header is required")
+	}
+	accountID := c.Params("id")
+	if accountID == "" {
+		return badRequest(c, "account id is required")
+	}
+
+	info, err := ctrl.xenditClient.GetAccount(c.Context(), accountID)
+	if err != nil {
+		return internalError(c, err)
+	}
+	return c.JSON(common.Response{Status: "OK", Data: info})
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────

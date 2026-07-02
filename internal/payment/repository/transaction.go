@@ -334,6 +334,28 @@ func (r *TransactionRepository) ListExpired(ctx context.Context, limit int) ([]*
 	return collectTransactions(rows)
 }
 
+// ListPaidByProvider returns up to limit paid transactions for the given provider
+// that have a provider_payment_id set and have not yet been settled.
+// Uses SKIP LOCKED so parallel job instances don't block each other.
+func (r *TransactionRepository) ListPaidByProvider(ctx context.Context, providerName string, limit int) ([]*domain.PaymentTransaction, error) {
+	rows, err := dbFromContext(ctx, r.pool).Query(ctx, `
+		SELECT `+txnColumns+`
+		FROM payment_transactions
+		WHERE status = 'paid'
+		  AND provider = $1
+		  AND provider_payment_id IS NOT NULL
+		  AND provider_payment_id != ''
+		ORDER BY paid_at ASC
+		LIMIT $2
+		FOR UPDATE SKIP LOCKED`,
+		providerName, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list paid transactions for provider %q: %w", providerName, err)
+	}
+	defer rows.Close()
+	return collectTransactions(rows)
+}
+
 // ─── column list & scanners ───────────────────────────────────────────────────
 
 const txnColumns = `

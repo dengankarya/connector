@@ -30,6 +30,7 @@ import (
 	"github.com/dengankarya/connector/pkg/geoapify"
 	"github.com/dengankarya/connector/pkg/tokokarya"
 	"github.com/dengankarya/connector/pkg/wilayah"
+	"github.com/dengankarya/connector/pkg/xendit"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
@@ -77,12 +78,13 @@ func main() {
 
 	// ── PostgreSQL ──────────────────────────────────────────────────────────
 	var (
-		pool              *pgxpool.Pool
-		paymentMod        *payment.Module
-		accountMod        *account.Module
-		shippingMod       *shipping.Module
-		cancelExpiredJob  *jobs.CancelExpiredOrderJob
-		dokuClient        *doku.Client // shared: account gateway + payment provider
+		pool             *pgxpool.Pool
+		paymentMod       *payment.Module
+		accountMod       *account.Module
+		shippingMod      *shipping.Module
+		cancelExpiredJob *jobs.CancelExpiredOrderJob
+		dokuClient       *doku.Client   // shared: account gateway + payment provider
+		xenditClient     *xendit.Client // shared: account gateway + payment provider
 	)
 
 	if cfg.DatabaseDSN != "" {
@@ -99,6 +101,11 @@ func main() {
 		if cfg.DokuClientID != "" {
 			dokuClient = doku.NewClient(cfg.DokuClientID, cfg.DokuSecretKey, cfg.DokuBaseURL, cfg.WebhookBaseURL, log.StandardLogger())
 		}
+
+		// Initialize Xendit client if configured
+		if cfg.XenditAPIKey != "" {
+			xenditClient = xendit.NewClient(cfg.XenditAPIKey, cfg.XenditBaseURL, cfg.XenditCallbackToken, cfg.WebhookBaseURL, log.StandardLogger())
+		}
 	}
 
 	// ── asynq client (enqueuer) + embedded worker server ───────────────────
@@ -109,9 +116,18 @@ func main() {
 	asynqClient := asynq.NewClient(redisOpt)
 	defer asynqClient.Close()
 
+	// Build provider map — constructed before module wiring so both payment and account share the same set.
+	paymentProviders := map[string]provider.PaymentProvider{}
+	if dokuClient != nil {
+		paymentProviders["doku"] = dokuClient
+	}
+	if xenditClient != nil {
+		paymentProviders["xendit"] = xenditClient
+	}
+
 	// Wire modules (payment, account, shipping) with all their components
-	paymentMod = payment.NewModule(pool, asynqClient, dokuClient, nil, tokokaryaClient, log.StandardLogger())
-	accountMod = account.NewModule(pool, paymentMod.TxRunner, dokuClient, log.StandardLogger())
+	paymentMod = payment.NewModule(pool, asynqClient, paymentProviders, nil, tokokaryaClient, log.StandardLogger())
+	accountMod = account.NewModule(pool, paymentMod.TxRunner, dokuClient, xenditClient, log.StandardLogger())
 
 	// Biteship client setup for shipping
 	var biteshipClient *biteship.Client
@@ -126,6 +142,12 @@ func main() {
 	})
 	cancelExpiredJob = jobs.NewCancelExpiredOrderJob(tokokaryaClient, log.StandardLogger())
 	workerMux.HandleFunc(worker.TaskCancelExpiredOrder, cancelExpiredJob.ProcessTask)
+
+	// Xendit settlement sync job — created directly here (needs xenditClient which lives in main).
+	var syncXenditJob *jobs.SyncXenditSettlementsJob
+	if xenditClient != nil && paymentMod.TransactionRepo != nil {
+		syncXenditJob = jobs.NewSyncXenditSettlementsJob(paymentMod.TransactionRepo, paymentMod.TxRunner, xenditClient, log.StandardLogger())
+	}
 	go func() {
 		if err := workerServer.Start(workerMux); err != nil {
 			log.WithError(err).Fatal("asynq worker server failed")
@@ -145,6 +167,13 @@ func main() {
 		workerMux.HandleFunc(worker.TaskRetryWebhooks, func(ctx context.Context, t *asynq.Task) error {
 			return paymentMod.RetryJob.Run(ctx)
 		})
+
+		if syncXenditJob != nil {
+			_, _ = scheduler.Register("*/30 * * * *", asynq.NewTask(worker.TaskSyncXenditSettlements, nil))
+			workerMux.HandleFunc(worker.TaskSyncXenditSettlements, func(ctx context.Context, t *asynq.Task) error {
+				return syncXenditJob.Run(ctx)
+			})
+		}
 
 		go func() {
 			if err := scheduler.Run(); err != nil {
@@ -176,13 +205,18 @@ func main() {
 		webhook.RegisterIngestHandler(apiRootGroup, "/webhook/doku", dokuClient, paymentMod.EventRepo, paymentMod.WebhookLogRepo, asynqClient, log.StandardLogger())
 	}
 
+	// ── Xendit payment webhook — public, no API key check ──────────────────
+	if xenditClient != nil && paymentMod.EventRepo != nil {
+		webhook.RegisterIngestHandler(apiRootGroup, "/webhook/xendit", xenditClient, paymentMod.EventRepo, paymentMod.WebhookLogRepo, asynqClient, log.StandardLogger())
+	}
+
 	// ── Authenticated routes ─────────────────────────────────────────────────
 	app.Use(authenticatedRequest(cfg))
 
 	shipping.RegisterHandlers(apiRootGroup.Group("/shipments"), shippingMod.Service)
 
 	if accountMod.Service != nil {
-		account.RegisterHandlers(apiRootGroup.Group("/accounts"), accountMod.Service, adminRequest(cfg))
+		account.RegisterHandlers(apiRootGroup.Group("/accounts"), accountMod.Service, accountMod.XenditClient, adminRequest(cfg))
 	}
 
 	wilayahClient := wilayah.NewClient(cfg.WilayahBaseURL)
@@ -197,16 +231,10 @@ func main() {
 
 	// Payment module endpoints (requires DB).
 	if paymentMod.PaymentService != nil {
-		// Convert *doku.Client to the interface explicitly so a nil pointer doesn't
-		// produce a non-nil interface value (which would wrongly enable POST /payments).
-		var paymentProv provider.PaymentProvider
-		if dokuClient != nil {
-			paymentProv = dokuClient
-		}
 		payment.RegisterPaymentHandlers(
 			apiRootGroup.Group("/payments"),
 			paymentMod.PaymentService,
-			paymentProv,
+			paymentMod.Providers,
 			asynqClient,
 			log.StandardLogger(),
 		)

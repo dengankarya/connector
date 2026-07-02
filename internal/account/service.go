@@ -16,15 +16,16 @@ import (
 
 // Service handles all account-level operations: activity feed, shipping balance, holds, topups.
 type Service struct {
-	repo       *Repository
-	txRunner   *postgres.TxRunner
-	dokuClient GatewayClient // nil when Doku is not configured
-	logger     *logrus.Logger
+	repo         *Repository
+	txRunner     *postgres.TxRunner
+	dokuClient   GatewayClient       // nil when Doku is not configured
+	xenditClient XenditGatewayClient // nil when Xendit is not configured
+	logger       *logrus.Logger
 }
 
-// NewService creates a Service. Pass nil for dokuClient when Doku is not configured.
-func NewService(repo *Repository, txRunner *postgres.TxRunner, dokuClient GatewayClient, logger *logrus.Logger) *Service {
-	return &Service{repo: repo, txRunner: txRunner, dokuClient: dokuClient, logger: logger}
+// NewService creates a Service. Pass nil for clients that are not configured.
+func NewService(repo *Repository, txRunner *postgres.TxRunner, dokuClient GatewayClient, xenditClient XenditGatewayClient, logger *logrus.Logger) *Service {
+	return &Service{repo: repo, txRunner: txRunner, dokuClient: dokuClient, xenditClient: xenditClient, logger: logger}
 }
 
 // ─── Activity feed ────────────────────────────────────────────────────────────
@@ -116,10 +117,10 @@ func (s *Service) GetPaymentBalance(ctx context.Context, tenantID int64) (*Merch
 	return s.repo.GetPaymentBalance(ctx, tenantID)
 }
 
-// GetGatewayAccountIDForTenant returns the DOKU sub-account ID for the given tenant.
+// GetGatewayAccountIDForTenant returns the gateway sub-account ID for the given tenant and provider.
 // Returns an empty string (not an error) when no sub-account has been provisioned.
-func (s *Service) GetGatewayAccountIDForTenant(ctx context.Context, tenantID int64) (string, error) {
-	acct, err := s.repo.GetGatewayAccountByTenantID(ctx, tenantID, "doku")
+func (s *Service) GetGatewayAccountIDForTenant(ctx context.Context, tenantID int64, provider string) (string, error) {
+	acct, err := s.repo.GetGatewayAccountByTenantID(ctx, tenantID, provider)
 	if err != nil {
 		return "", err
 	}
@@ -208,6 +209,52 @@ func (s *Service) CreateGatewaySubAccount(ctx context.Context, req CreateGateway
 	return acct, nil
 }
 
+// CreateXenditSubAccountRequest is the input for provisioning a Xendit MANAGED sub-account.
+type CreateXenditSubAccountRequest struct {
+	TenantID int64
+	Email    string
+	Name     string
+}
+
+// CreateXenditSubAccount provisions a Xendit MANAGED sub-account for the tenant and stores it.
+// Also registers the /webhook/xendit callback URL on the created sub-account.
+// Returns ErrGatewayNotConfigured when Xendit is not configured.
+// Returns ErrGatewayAccountExists when the tenant already has a Xendit account.
+func (s *Service) CreateXenditSubAccount(ctx context.Context, req CreateXenditSubAccountRequest) (*GatewayAccount, error) {
+	if s.xenditClient == nil {
+		return nil, ErrGatewayNotConfigured
+	}
+
+	// Idempotency guard — check DB before calling Xendit.
+	if _, err := s.repo.GetGatewayAccountByTenantID(ctx, req.TenantID, "xendit"); err == nil {
+		return nil, ErrGatewayAccountExists
+	}
+
+	gatewayAccountID, status, err := s.xenditClient.CreateSubAccount(ctx, req.Email, req.Name)
+	if err != nil {
+		return nil, fmt.Errorf("xendit: create sub-account: %w", err)
+	}
+
+	acct := &GatewayAccount{
+		TenantID:         req.TenantID,
+		Gateway:          "xendit",
+		GatewayAccountID: gatewayAccountID,
+		Email:            req.Email,
+		Name:             req.Name,
+		Status:           status,
+	}
+	if err := s.repo.CreateGatewayAccount(ctx, acct); err != nil {
+		return nil, err
+	}
+
+	s.logger.WithFields(logrus.Fields{
+		"component":          "account",
+		"tenant_id":          req.TenantID,
+		"gateway_account_id": gatewayAccountID,
+	}).Info("xendit sub-account created")
+	return acct, nil
+}
+
 // SendGatewayPayoutRequest is the input for disbursing funds via the gateway.
 type SendGatewayPayoutRequest struct {
 	TenantID          int64
@@ -285,7 +332,6 @@ func (s *Service) Topup(ctx context.Context, req TopupRequest) (*ShippingTopup, 
 	}).Info("shipping balance topped up")
 	return topup, nil
 }
-
 
 // AdjustShippingBalance applies a shipping price correction to the merchant's available balance
 // and records an audit row in shipping_price_adjustments.
