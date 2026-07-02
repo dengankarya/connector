@@ -18,17 +18,6 @@ definitions:
       status:
         type: string
     type: object
-  ? github_com_dengankarya_connector_common.PaginationResponse-github_com_dengankarya_connector_internal_payment_domain_PaymentTransaction
-  : properties:
-      has_more:
-        type: boolean
-      items:
-        items:
-          $ref: '#/definitions/github_com_dengankarya_connector_internal_payment_domain.PaymentTransaction'
-        type: array
-      next_cursor:
-        type: string
-    type: object
   github_com_dengankarya_connector_common.PaginationResponse-github_com_dengankarya_connector_internal_shipping_domain_Shipment:
     properties:
       has_more:
@@ -1918,76 +1907,6 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Confirm manual payment
-      tags:
-      - Payments
-  /payments/transactions:
-    get:
-      description: Returns a cursor-paginated list of payment transactions for the
-        tenant. Supports filtering by status.
-      parameters:
-      - description: Tenant ID
-        format: int64
-        in: header
-        name: X-Tenant-ID
-        required: true
-        type: integer
-      - description: Number of results per page (default 20, max 100)
-        in: query
-        name: limit
-        type: integer
-      - description: Pagination cursor returned by previous response
-        in: query
-        name: cursor
-        type: string
-      - description: Comma-separated statuses to filter
-        enum:
-        - pending
-        - awaiting_payment
-        - paid
-        - settled
-        - refunding
-        - refunded
-        - expired
-        - failed
-        - voided
-        in: query
-        name: status
-        type: string
-      - description: Start date inclusive, format YYYY-MM-DD (e.g. 2026-05-01)
-        in: query
-        name: date_from
-        type: string
-      - description: End date inclusive, format YYYY-MM-DD (e.g. 2026-05-31)
-        in: query
-        name: date_to
-        type: string
-      - description: Provider to filter by (e.g. 'manual_transfer')
-        in: query
-        name: provider
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Paginated transaction list
-          schema:
-            allOf:
-            - $ref: '#/definitions/common.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/github_com_dengankarya_connector_common.PaginationResponse-github_com_dengankarya_connector_internal_payment_domain_PaymentTransaction'
-              type: object
-        "400":
-          description: Invalid request or cursor
-          schema:
-            $ref: '#/definitions/common.Response'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/common.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: List payment transactions
       tags:
       - Payments
   /regions/districts/{regency_code}:

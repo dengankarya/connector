@@ -1,11 +1,9 @@
 package payment
 
 import (
-	"errors"
 	"net/http"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/dengankarya/connector/common"
@@ -38,7 +36,6 @@ func RegisterPaymentHandlers(
 	logger *logrus.Logger,
 ) {
 	ctrl := &paymentController{svc: svc, providers: providers, enqueuer: enqueuer, logger: logger}
-	mux.Get("/transactions", ctrl.listTransactions)
 
 	mux.Post("/cancel-schedule", ctrl.scheduleOrderCancellation)
 	mux.Post("/manual", ctrl.createManualPayment)
@@ -396,107 +393,6 @@ func (ctrl *paymentController) scheduleOrderCancellation(c fiber.Ctx) error {
 		Data: map[string]any{
 			"order_number":     body.OrderNumber,
 			"should_expire_at": body.ShouldExpireAt,
-		},
-	})
-}
-
-// listTransactions godoc
-//
-//	@Summary		List payment transactions
-//	@Description	Returns a cursor-paginated list of payment transactions for the tenant. Supports filtering by status.
-//	@Tags			Payments
-//	@Produce		json
-//	@Param			X-Tenant-ID	header		int64																		true	"Tenant ID"
-//	@Param			limit		query		int																			false	"Number of results per page (default 20, max 100)"
-//	@Param			cursor		query		string																		false	"Pagination cursor returned by previous response"
-//	@Param			status		query		string																		false	"Comma-separated statuses to filter"	Enums(pending,awaiting_payment,paid,settled,refunding,refunded,expired,failed,voided)
-//	@Param			date_from	query		string																		false	"Start date inclusive, format YYYY-MM-DD (e.g. 2026-05-01)"
-//	@Param			date_to		query		string																		false	"End date inclusive, format YYYY-MM-DD (e.g. 2026-05-31)"
-//	@Param			provider	query		string																		false	"Provider to filter by (e.g. 'manual_transfer')"
-//	@Success		200			{object}	common.Response{data=common.PaginationResponse[domain.PaymentTransaction]}	"Paginated transaction list"
-//	@Failure		400			{object}	common.Response																"Invalid request or cursor"
-//	@Failure		500			{object}	common.Response																"Internal server error"
-//	@Security		ApiKeyAuth
-//	@Router			/payments/transactions [get]
-func (ctrl *paymentController) listTransactions(c fiber.Ctx) error {
-	tenantID := mustParseIntHeader(c, "X-Tenant-ID")
-	if tenantID == 0 {
-		return c.Status(http.StatusBadRequest).JSON(common.Response{
-			Status: "Bad Request", Error: "X-Tenant-ID header is required",
-		})
-	}
-
-	limit, _ := strconv.Atoi(c.Query("limit", "20"))
-	cursor := c.Query("cursor")
-	paymentProvider := c.Query("provider")
-	if paymentProvider != "" && paymentProvider != "manual_transfer" {
-		return c.Status(http.StatusBadRequest).JSON(common.Response{
-			Status: "Bad Request", Error: "invalid provider value",
-		})
-	}
-
-	// Accept comma-separated statuses: ?status=paid,settled
-	var statuses []domain.PaymentStatus
-	if s := c.Query("status"); s != "" {
-		for part := range strings.SplitSeq(s, ",") {
-			part = strings.TrimSpace(part)
-			if part == "" {
-				continue
-			}
-			ps := domain.PaymentStatus(part)
-			if !ps.IsValid() {
-				return c.Status(http.StatusBadRequest).JSON(common.Response{
-					Status: "Bad Request",
-					Error:  "invalid status value: " + part,
-				})
-			}
-			statuses = append(statuses, ps)
-		}
-	}
-
-	// Date range: accept YYYY-MM-DD. date_from is inclusive (start of day UTC);
-	// date_to is inclusive (end of day UTC, stored as start of next day).
-	var dateFrom, dateTo *time.Time
-	if s := c.Query("date_from"); s != "" {
-		if t, err := time.Parse("2006-01-02", s); err == nil {
-			t = t.UTC()
-			dateFrom = &t
-		}
-	}
-	if s := c.Query("date_to"); s != "" {
-		if t, err := time.Parse("2006-01-02", s); err == nil {
-			t = t.UTC().AddDate(0, 0, 1) // exclusive upper bound = start of next day
-			dateTo = &t
-		}
-	}
-
-	result, err := ctrl.svc.ListTransactions(c.Context(), paymentservice.ListTransactionsRequest{
-		TenantID: tenantID,
-		Limit:    limit,
-		Cursor:   cursor,
-		Status:   statuses,
-		DateFrom: dateFrom,
-		DateTo:   dateTo,
-		Provider: paymentProvider,
-	})
-	if err != nil {
-		if errors.Is(err, paymentservice.ErrInvalidCursor) {
-			return c.Status(http.StatusBadRequest).JSON(common.Response{
-				Status: "Bad Request", Error: err.Error(),
-			})
-		}
-		ctrl.logger.WithError(err).Error("list transactions failed")
-		return c.Status(http.StatusInternalServerError).JSON(common.Response{
-			Status: "Internal Server Error", Error: err.Error(),
-		})
-	}
-
-	return c.Status(http.StatusOK).JSON(common.Response{
-		Status: "OK",
-		Data: common.PaginationResponse[*domain.PaymentTransaction]{
-			Items:      result.Items,
-			NextCursor: result.NextCursor,
-			HasMore:    result.HasMore,
 		},
 	})
 }

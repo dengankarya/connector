@@ -1376,112 +1376,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/payments/transactions": {
-            "get": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "description": "Returns a cursor-paginated list of payment transactions for the tenant. Supports filtering by status.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Payments"
-                ],
-                "summary": "List payment transactions",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "format": "int64",
-                        "description": "Tenant ID",
-                        "name": "X-Tenant-ID",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Number of results per page (default 20, max 100)",
-                        "name": "limit",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Pagination cursor returned by previous response",
-                        "name": "cursor",
-                        "in": "query"
-                    },
-                    {
-                        "enum": [
-                            "pending",
-                            "awaiting_payment",
-                            "paid",
-                            "settled",
-                            "refunding",
-                            "refunded",
-                            "expired",
-                            "failed",
-                            "voided"
-                        ],
-                        "type": "string",
-                        "description": "Comma-separated statuses to filter",
-                        "name": "status",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Start date inclusive, format YYYY-MM-DD (e.g. 2026-05-01)",
-                        "name": "date_from",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "End date inclusive, format YYYY-MM-DD (e.g. 2026-05-31)",
-                        "name": "date_to",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Provider to filter by (e.g. 'manual_transfer')",
-                        "name": "provider",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Paginated transaction list",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/common.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/github_com_dengankarya_connector_common.PaginationResponse-github_com_dengankarya_connector_internal_payment_domain_PaymentTransaction"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request or cursor",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    }
-                }
-            }
-        },
         "/payments/{id}": {
             "get": {
                 "security": [
@@ -2271,23 +2165,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "status": {
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_dengankarya_connector_common.PaginationResponse-github_com_dengankarya_connector_internal_payment_domain_PaymentTransaction": {
-            "type": "object",
-            "properties": {
-                "has_more": {
-                    "type": "boolean"
-                },
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_dengankarya_connector_internal_payment_domain.PaymentTransaction"
-                    }
-                },
-                "next_cursor": {
                     "type": "string"
                 }
             }
