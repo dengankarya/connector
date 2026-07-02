@@ -191,7 +191,7 @@ func main() {
 	app.Use(cors.New(cors.ConfigDefault))
 	app.Use(requestLogger())
 
-	// Asynq queue monitor dashboard — available at /monitor
+	// Asynq queue monitor dashboard — no API key (protected at infra level via Cloudflare Access)
 	monHandler := asynqmon.New(asynqmon.Options{RootPath: "/monitor", RedisConnOpt: redisOpt})
 	fastMonHandler := fasthttpadaptor.NewFastHTTPHandler(monHandler)
 	app.All("/monitor{*}", func(c fiber.Ctx) error {
