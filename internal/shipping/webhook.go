@@ -34,9 +34,9 @@ type ShipmentWebhookPayload struct {
 	TrackingNumber string    `json:"tracking_number,omitempty"`
 	TrackingURL    string    `json:"tracking_url,omitempty"`
 	ShippingCost   int64     `json:"shipping_cost,omitempty"`
-	OldPrice       int64     `json:"old_price,omitempty"` // for order.price events
+	OldPrice       int64     `json:"old_price,omitempty"`  // for order.price events
 	PriceDiff      int64     `json:"price_diff,omitempty"` // new_price - old_price
-	Event          string    `json:"event"` // "order.status" | "order.price" | "order.waybill_id"
+	Event          string    `json:"event"`                // "order.status" | "order.price" | "order.waybill_id"
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
@@ -45,7 +45,7 @@ type webhookController struct {
 	signatureValue string
 	repo           *repository.ShipmentRepository // may be nil
 	forwarder      ShipmentWebhookForwarder       // may be nil
-	accountManager domain.AccountManager           // may be nil
+	accountManager domain.AccountManager          // may be nil
 	logger         *log.Logger
 }
 

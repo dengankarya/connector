@@ -15,7 +15,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-
 // PaymentForwarder forwards a normalized payment status event to an upstream system
 // (e.g. Tokokarya) after the DB transaction commits. Called in a fire-and-forget goroutine.
 // tokokarya.Client satisfies this interface.
@@ -40,9 +39,9 @@ type PaymentStatusEvent struct {
 // Processor orchestrates the full webhook processing pipeline.
 // Every step from lock → transition → ledger → mark-processed runs in one DB transaction.
 type Processor struct {
-	eventRepo        *repository.WebhookEventRepository
-	txnRepo          *repository.TransactionRepository
-	ledger           *ledger.Service
+	eventRepo *repository.WebhookEventRepository
+	txnRepo   *repository.TransactionRepository
+	ledger    *ledger.Service
 	txRunner  *repository.TxRunner
 	forwarder PaymentForwarder // optional; if nil Tokokarya forwarding is skipped
 	logger    *logrus.Logger
@@ -280,7 +279,6 @@ func (p *Processor) handlePaid(ctx context.Context, event *domain.WebhookEvent, 
 	if err := p.ledger.RecordPayment(ctx, txn, event.ID); err != nil {
 		return fmt.Errorf("record payment ledger: %w", err)
 	}
-
 
 	log.WithFields(logrus.Fields{
 		"prev_status":         prevStatus,

@@ -398,6 +398,155 @@
                 }
             }
         },
+        "/accounts/gateway/xendit/sub-account": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Creates a Xendit MANAGED sub-account for the tenant and registers our payment webhook URL on it. The merchant receives an invitation email from Xendit to complete sign-up. Idempotent — returns 409 if an account already exists for this tenant.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Provision Xendit MANAGED sub-account",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "Tenant ID",
+                        "name": "X-Tenant-ID",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Sub-account details",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_account.CreateGatewaySubAccountBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Sub-account created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/internal_account.GatewayAccount"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "Xendit account already exists for this tenant",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "503": {
+                        "description": "Xendit not configured",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/accounts/gateway/xendit/sub-account/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Fetches the live account status and public profile from Xendit by account ID. Useful for tracking merchant onboarding progress (INVITED → REGISTERED → AWAITING_DOCS → PENDING_VERIFICATION → LIVE).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Get Xendit sub-account status",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "Tenant ID",
+                        "name": "X-Tenant-ID",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Xendit account ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Account info",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/internal_account.XenditAccountInfo"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Missing tenant ID",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/accounts/holds": {
             "get": {
                 "security": [
@@ -3299,6 +3448,34 @@
                 }
             }
         },
+        "internal_account.XenditAccountInfo": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "public_profile": {
+                    "type": "object",
+                    "properties": {
+                        "country": {
+                            "type": "string"
+                        },
+                        "name": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_payment.ConfirmManualPaymentBody": {
             "type": "object",
             "properties": {
@@ -3396,18 +3573,18 @@
                 "platform_fee": {
                     "type": "integer"
                 },
+                "provider": {
+                    "description": "\"xendit\" or \"doku\"; required when multiple providers are configured",
+                    "type": "string"
+                },
                 "result_url": {
-                    "description": "result page URL for DOKU",
+                    "description": "optional; DOKU result page URL",
                     "type": "string"
                 },
                 "shipping_fee": {
                     "type": "integer"
                 },
                 "success_return_url": {
-                    "type": "string"
-                },
-                "webhook_notification_url": {
-                    "description": "override webhook URL",
                     "type": "string"
                 }
             }

@@ -893,6 +893,24 @@ definitions:
         description: Shipping wallet — available funds and funds on hold for pending
           shipments.
     type: object
+  internal_account.XenditAccountInfo:
+    properties:
+      email:
+        type: string
+      id:
+        type: string
+      public_profile:
+        properties:
+          country:
+            type: string
+          name:
+            type: string
+        type: object
+      status:
+        type: string
+      type:
+        type: string
+    type: object
   internal_payment.ConfirmManualPaymentBody:
     properties:
       payment_channel:
@@ -957,15 +975,15 @@ definitions:
         type: string
       platform_fee:
         type: integer
+      provider:
+        description: '"xendit" or "doku"; required when multiple providers are configured'
+        type: string
       result_url:
-        description: result page URL for DOKU
+        description: optional; DOKU result page URL
         type: string
       shipping_fee:
         type: integer
       success_return_url:
-        type: string
-      webhook_notification_url:
-        description: override webhook URL
         type: string
     type: object
   internal_payment.ScheduleOrderCancellationBody:
@@ -1230,6 +1248,102 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Provision Doku gateway sub-account
+      tags:
+      - Account
+  /accounts/gateway/xendit/sub-account:
+    post:
+      consumes:
+      - application/json
+      description: Creates a Xendit MANAGED sub-account for the tenant and registers
+        our payment webhook URL on it. The merchant receives an invitation email from
+        Xendit to complete sign-up. Idempotent — returns 409 if an account already
+        exists for this tenant.
+      parameters:
+      - description: Tenant ID
+        format: int64
+        in: header
+        name: X-Tenant-ID
+        required: true
+        type: integer
+      - description: Sub-account details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_account.CreateGatewaySubAccountBody'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Sub-account created
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_account.GatewayAccount'
+              type: object
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/common.Response'
+        "409":
+          description: Xendit account already exists for this tenant
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/common.Response'
+        "503":
+          description: Xendit not configured
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Provision Xendit MANAGED sub-account
+      tags:
+      - Account
+  /accounts/gateway/xendit/sub-account/{id}:
+    get:
+      description: Fetches the live account status and public profile from Xendit
+        by account ID. Useful for tracking merchant onboarding progress (INVITED →
+        REGISTERED → AWAITING_DOCS → PENDING_VERIFICATION → LIVE).
+      parameters:
+      - description: Tenant ID
+        format: int64
+        in: header
+        name: X-Tenant-ID
+        required: true
+        type: integer
+      - description: Xendit account ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Account info
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_account.XenditAccountInfo'
+              type: object
+        "400":
+          description: Missing tenant ID
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Get Xendit sub-account status
       tags:
       - Account
   /accounts/holds:

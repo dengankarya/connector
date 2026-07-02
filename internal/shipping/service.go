@@ -23,10 +23,10 @@ type LogisticAggregator interface {
 }
 
 type ShippingService struct {
-	repo            LogisticAggregator
-	provider        provider.ShippingProvider
-	shipmentRepo    *repository.ShipmentRepository // may be nil when DB is not configured
-	accountManager  domain.AccountManager           // may be nil when account module is disabled
+	repo           LogisticAggregator
+	provider       provider.ShippingProvider
+	shipmentRepo   *repository.ShipmentRepository // may be nil when DB is not configured
+	accountManager domain.AccountManager          // may be nil when account module is disabled
 }
 
 func NewShippingService(repo LogisticAggregator, prov provider.ShippingProvider, shipmentRepo *repository.ShipmentRepository, accountManager domain.AccountManager) *ShippingService {
