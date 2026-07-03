@@ -649,11 +649,14 @@ func (ctrl *controller) createXenditAccountHolder(c fiber.Ctx) error {
 	if err := c.Bind().JSON(&req); err != nil {
 		return badRequest(c, err.Error())
 	}
+	if req.BusinessDetail.Type == "" {
+		return badRequest(c, "business_detail.type is required")
+	}
 	if req.BusinessDetail.LegalName == "" {
 		return badRequest(c, "business_detail.legal_name is required")
 	}
-	if req.BusinessDetail.Type == "" {
-		return badRequest(c, "business_detail.type is required")
+	if req.BusinessDetail.IndustryCategory == "" {
+		return badRequest(c, "business_detail.industry_category is required")
 	}
 	if req.BusinessDetail.CountryOfOperation == "" {
 		req.BusinessDetail.CountryOfOperation = "ID"
