@@ -61,7 +61,7 @@ func NewClient(apiKey, baseURL, callbackToken, webhookBaseURL string, logger *lo
 func (c *Client) CreateSubAccount(ctx context.Context, email, name string) (gatewayAccountID, status string, err error) {
 	req := createAccountRequest{
 		Email: email,
-		Type:  "OWNED",
+		Type:  "MANAGED",
 	}
 	req.PublicProfile.BusinessName = name
 	var resp createAccountResponse
