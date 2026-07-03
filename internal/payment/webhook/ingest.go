@@ -1,6 +1,7 @@
 package webhook
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/dengankarya/connector/internal/payment/domain"
@@ -11,11 +12,21 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// AccountEventHandler handles non-payment webhook events (e.g. account status, KYC).
+// Implemented by *account.XenditAccountWebhookHandler. Pass nil to skip account routing.
+type AccountEventHandler interface {
+	Handle(ctx context.Context, eventType string, rawPayload []byte)
+	IsAccountEvent(eventType string) bool
+}
+
 // RegisterIngestHandler registers a POST webhook ingestion endpoint for the given provider.
 // The route must be registered before the auth middleware — webhooks are unauthenticated.
 //
 // Processing is async: the raw event is stored and enqueued immediately; the caller
 // receives HTTP 200 as soon as the event is persisted.
+//
+// accountHandler, when non-nil, receives account-level events (account.*, account_holder.*)
+// and handles them synchronously. Payment events go through the normal async pipeline.
 func RegisterIngestHandler(
 	mux fiber.Router,
 	route string,
@@ -24,6 +35,7 @@ func RegisterIngestHandler(
 	logRepo *repository.WebhookRequestLogRepository,
 	enqueuer *asynq.Client,
 	logger *logrus.Logger,
+	accountHandler AccountEventHandler,
 ) {
 	mux.Post(route, func(c fiber.Ctx) error {
 		ctx := c.Context()
@@ -84,6 +96,12 @@ func RegisterIngestHandler(
 			"event_type":          parsed.EventType,
 			"provider_invoice_id": parsed.ProviderInvoiceID,
 		}).Info("webhook event parsed")
+
+		// Account-level events are handled synchronously and bypass the payment pipeline.
+		if accountHandler != nil && accountHandler.IsAccountEvent(parsed.EventType) {
+			accountHandler.Handle(ctx, parsed.EventType, rawBody)
+			return c.Status(http.StatusOK).JSON(map[string]string{"status": "ok"})
+		}
 
 		event := &domain.WebhookEvent{
 			Provider:          prov.ProviderName(),

@@ -225,7 +225,7 @@ type XenditGatewayClient interface {
 
 // AccountHolderBusinessDetail is the KYC business information for CreateAccountHolder.
 type AccountHolderBusinessDetail struct {
-	Type               string `json:"type"`                          // CORPORATION | PARTNERSHIP | SOLE_PROPRIETORSHIP | INDIVIDUAL
+	Type               string `json:"type"` // CORPORATION | PARTNERSHIP | SOLE_PROPRIETORSHIP | INDIVIDUAL
 	LegalName          string `json:"legal_name"`
 	TradingName        string `json:"trading_name,omitempty"`
 	Description        string `json:"description,omitempty"`

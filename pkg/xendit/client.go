@@ -223,8 +223,29 @@ func (c *Client) ValidateWebhookSignature(_ context.Context, _ []byte, headers m
 	return nil
 }
 
-// ParseWebhookEvent parses a Xendit Payment Session webhook payload into a provider-agnostic event.
+// ParseWebhookEvent parses a Xendit webhook payload into a provider-agnostic event.
+// Xendit sends both payment session events and account-level events to the same URL.
+// Account events (account.*, account_holder.*) are returned with EventType set but no
+// ProviderInvoiceID — the ingest handler routes them to the account webhook handler.
 func (c *Client) ParseWebhookEvent(_ context.Context, payload []byte) (*provider.WebhookEvent, error) {
+	// Peek at event type before full parse — account events have a different structure.
+	var envelope struct {
+		Event      string `json:"event"`
+		BusinessID string `json:"business_id"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		return nil, fmt.Errorf("xendit: parse webhook: %w", err)
+	}
+
+	if strings.HasPrefix(envelope.Event, "account.") || strings.HasPrefix(envelope.Event, "account_holder.") {
+		// Account-level event — no payment_session_id; ingest handler will route separately.
+		return &provider.WebhookEvent{
+			ProviderEventID: envelope.Event + ":" + envelope.BusinessID,
+			EventType:       envelope.Event,
+			RawPayload:      payload,
+		}, nil
+	}
+
 	var notif sessionWebhookPayload
 	if err := json.Unmarshal(payload, &notif); err != nil {
 		return nil, fmt.Errorf("xendit: parse webhook: %w", err)

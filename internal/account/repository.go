@@ -630,6 +630,17 @@ func (r *Repository) GetGatewayAccountByTenantID(ctx context.Context, tenantID i
 	return &a, nil
 }
 
+// UpdateSubAccountStatusByGatewayID updates the status of a gateway sub-account identified
+// by its provider-side gateway_account_id (= Xendit user_id / account id).
+func (r *Repository) UpdateSubAccountStatusByGatewayID(ctx context.Context, gateway, gatewayAccountID, status string) error {
+	_, err := dbFromContext(ctx, r.pool).Exec(ctx, `
+		UPDATE merchant_gateway_accounts
+		SET status = $1, updated_at = NOW()
+		WHERE gateway = $2 AND gateway_account_id = $3`,
+		status, gateway, gatewayAccountID)
+	return err
+}
+
 // ─── Topups ───────────────────────────────────────────────────────────────────
 
 func (r *Repository) CreateTopup(ctx context.Context, t *ShippingTopup) error {

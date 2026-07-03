@@ -601,6 +601,39 @@ definitions:
       tier:
         type: string
     type: object
+  internal_account.AccountHolderAddress:
+    properties:
+      city:
+        type: string
+      country:
+        type: string
+      postal_code:
+        type: string
+      province_state:
+        type: string
+      street_line1:
+        type: string
+    type: object
+  internal_account.AccountHolderBusinessDetail:
+    properties:
+      country_of_operation:
+        description: '"ID"'
+        type: string
+      date_of_registration:
+        description: YYYY-MM-DD
+        type: string
+      description:
+        type: string
+      industry_category:
+        type: string
+      legal_name:
+        type: string
+      trading_name:
+        type: string
+      type:
+        description: CORPORATION | PARTNERSHIP | SOLE_PROPRIETORSHIP | INDIVIDUAL
+        type: string
+    type: object
   internal_account.ActivityDetail:
     properties:
       amount:
@@ -678,6 +711,19 @@ definitions:
     - ActivityShipmentConfirmed
     - ActivityShipmentReleased
     - ActivityShipmentPriceAdjustment
+  internal_account.CreateAccountHolderRequest:
+    properties:
+      address:
+        $ref: '#/definitions/internal_account.AccountHolderAddress'
+      business_detail:
+        $ref: '#/definitions/internal_account.AccountHolderBusinessDetail'
+      email:
+        type: string
+      phone_number:
+        type: string
+      website_url:
+        type: string
+    type: object
   internal_account.CreateGatewaySubAccountBody:
     properties:
       email:
@@ -1238,6 +1284,54 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Provision Doku gateway sub-account
+      tags:
+      - Account
+  /accounts/gateway/xendit/account-holder:
+    post:
+      consumes:
+      - application/json
+      description: Submits KYC business details for the tenant's Xendit sub-account
+        and links them. This starts the verification flow (REGISTERED → AWAITING_DOCS
+        → PENDING_VERIFICATION → LIVE). Call this after creating the sub-account.
+      parameters:
+      - description: Tenant ID
+        format: int64
+        in: header
+        name: X-Tenant-ID
+        required: true
+        type: integer
+      - description: KYC business details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_account.CreateAccountHolderRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Account holder created and linked
+          schema:
+            $ref: '#/definitions/common.Response'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: No Xendit sub-account found for this tenant
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/common.Response'
+        "503":
+          description: Xendit not configured
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Create and link Xendit account holder
       tags:
       - Account
   /accounts/gateway/xendit/sub-account:

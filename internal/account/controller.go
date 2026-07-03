@@ -630,13 +630,13 @@ func (ctrl *controller) getXenditAccount(c fiber.Ctx) error {
 //	@Tags			Account
 //	@Accept			json
 //	@Produce		json
-//	@Param			X-Tenant-ID	header		int64					true	"Tenant ID"
+//	@Param			X-Tenant-ID	header		int64								true	"Tenant ID"
 //	@Param			body		body		account.CreateAccountHolderRequest	true	"KYC business details"
-//	@Success		200			{object}	common.Response			"Account holder created and linked"
-//	@Failure		400			{object}	common.Response			"Invalid request"
-//	@Failure		404			{object}	common.Response			"No Xendit sub-account found for this tenant"
-//	@Failure		503			{object}	common.Response			"Xendit not configured"
-//	@Failure		500			{object}	common.Response			"Internal server error"
+//	@Success		200			{object}	common.Response						"Account holder created and linked"
+//	@Failure		400			{object}	common.Response						"Invalid request"
+//	@Failure		404			{object}	common.Response						"No Xendit sub-account found for this tenant"
+//	@Failure		503			{object}	common.Response						"Xendit not configured"
+//	@Failure		500			{object}	common.Response						"Internal server error"
 //	@Security		ApiKeyAuth
 //	@Router			/accounts/gateway/xendit/account-holder [post]
 func (ctrl *controller) createXenditAccountHolder(c fiber.Ctx) error {

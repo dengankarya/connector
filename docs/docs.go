@@ -401,6 +401,77 @@ const docTemplate = `{
                 }
             }
         },
+        "/accounts/gateway/xendit/account-holder": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Submits KYC business details for the tenant's Xendit sub-account and links them. This starts the verification flow (REGISTERED → AWAITING_DOCS → PENDING_VERIFICATION → LIVE). Call this after creating the sub-account.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Account"
+                ],
+                "summary": "Create and link Xendit account holder",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "Tenant ID",
+                        "name": "X-Tenant-ID",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "KYC business details",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_account.CreateAccountHolderRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Account holder created and linked",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "No Xendit sub-account found for this tenant",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "503": {
+                        "description": "Xendit not configured",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/accounts/gateway/xendit/sub-account": {
             "post": {
                 "security": [
@@ -2929,6 +3000,55 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_account.AccountHolderAddress": {
+            "type": "object",
+            "properties": {
+                "city": {
+                    "type": "string"
+                },
+                "country": {
+                    "type": "string"
+                },
+                "postal_code": {
+                    "type": "string"
+                },
+                "province_state": {
+                    "type": "string"
+                },
+                "street_line1": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_account.AccountHolderBusinessDetail": {
+            "type": "object",
+            "properties": {
+                "country_of_operation": {
+                    "description": "\"ID\"",
+                    "type": "string"
+                },
+                "date_of_registration": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "industry_category": {
+                    "type": "string"
+                },
+                "legal_name": {
+                    "type": "string"
+                },
+                "trading_name": {
+                    "type": "string"
+                },
+                "type": {
+                    "description": "CORPORATION | PARTNERSHIP | SOLE_PROPRIETORSHIP | INDIVIDUAL",
+                    "type": "string"
+                }
+            }
+        },
         "internal_account.ActivityDetail": {
             "type": "object",
             "properties": {
@@ -3033,6 +3153,26 @@ const docTemplate = `{
                 "ActivityShipmentReleased",
                 "ActivityShipmentPriceAdjustment"
             ]
+        },
+        "internal_account.CreateAccountHolderRequest": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "$ref": "#/definitions/internal_account.AccountHolderAddress"
+                },
+                "business_detail": {
+                    "$ref": "#/definitions/internal_account.AccountHolderBusinessDetail"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "phone_number": {
+                    "type": "string"
+                },
+                "website_url": {
+                    "type": "string"
+                }
+            }
         },
         "internal_account.CreateGatewaySubAccountBody": {
             "type": "object",

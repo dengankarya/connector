@@ -211,12 +211,16 @@ func main() {
 
 	// ── DOKU payment webhook — public, no API key check ──────────────────────
 	if dokuClient != nil && paymentMod.EventRepo != nil {
-		webhook.RegisterIngestHandler(apiRootGroup, "/webhook/doku", dokuClient, paymentMod.EventRepo, paymentMod.WebhookLogRepo, asynqClient, log.StandardLogger())
+		webhook.RegisterIngestHandler(apiRootGroup, "/webhook/doku", dokuClient, paymentMod.EventRepo, paymentMod.WebhookLogRepo, asynqClient, log.StandardLogger(), nil)
 	}
 
-	// ── Xendit payment webhook — public, no API key check ──────────────────
+	// ── Xendit payment + account webhooks — public, no API key check ───────
 	if xenditClient != nil && paymentMod.EventRepo != nil {
-		webhook.RegisterIngestHandler(apiRootGroup, "/webhook/xendit", xenditClient, paymentMod.EventRepo, paymentMod.WebhookLogRepo, asynqClient, log.StandardLogger())
+		var xenditAccountHandler webhook.AccountEventHandler
+		if accountMod.Repository != nil {
+			xenditAccountHandler = account.NewXenditAccountWebhookHandler(accountMod.Repository, log.StandardLogger())
+		}
+		webhook.RegisterIngestHandler(apiRootGroup, "/webhook/xendit", xenditClient, paymentMod.EventRepo, paymentMod.WebhookLogRepo, asynqClient, log.StandardLogger(), xenditAccountHandler)
 	}
 
 	// ── Authenticated routes — scoped to a group so /monitor stays public ────

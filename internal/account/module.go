@@ -9,6 +9,7 @@ import (
 // Module contains all account-related services.
 type Module struct {
 	Service      *Service
+	Repository   *Repository         // exposed for webhook handler construction in main
 	XenditClient XenditGatewayClient // exposed so RegisterHandlers can serve the GetAccount route
 }
 
@@ -33,6 +34,7 @@ func NewModule(
 
 	return &Module{
 		Service:      service,
+		Repository:   repo,
 		XenditClient: xenditClient,
 	}
 }
