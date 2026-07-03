@@ -5,9 +5,11 @@ import "time"
 // ── Sub-account ───────────────────────────────────────────────────────────────
 
 type createAccountRequest struct {
-	Email        string `json:"email"`
-	BusinessName string `json:"business_name"`
-	Type         string `json:"type"` // "MANAGED"
+	Email         string `json:"email"`
+	Type          string `json:"type"` // "OWNED" | "MANAGED"
+	PublicProfile struct {
+		BusinessName string `json:"business_name"`
+	} `json:"public_profile"`
 }
 
 type createAccountResponse struct {

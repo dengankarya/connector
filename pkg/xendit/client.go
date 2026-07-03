@@ -60,10 +60,10 @@ func NewClient(apiKey, baseURL, callbackToken, webhookBaseURL string, logger *lo
 // used as the for-user-id header in subsequent payment API calls.
 func (c *Client) CreateSubAccount(ctx context.Context, email, name string) (gatewayAccountID, status string, err error) {
 	req := createAccountRequest{
-		Email:        email,
-		BusinessName: name,
-		Type:         "MANAGED",
+		Email: email,
+		Type:  "OWNED",
 	}
+	req.PublicProfile.BusinessName = name
 	var resp createAccountResponse
 	if err := c.do(ctx, http.MethodPost, "/v2/accounts", "", req, &resp); err != nil {
 		return "", "", fmt.Errorf("xendit: create sub-account: %w", err)
