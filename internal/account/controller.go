@@ -652,11 +652,17 @@ func (ctrl *controller) createXenditAccountHolder(c fiber.Ctx) error {
 	if req.BusinessDetail.Type == "" {
 		return badRequest(c, "business_detail.type is required")
 	}
+	if !IsValidBusinessType(req.BusinessDetail.Type) {
+		return badRequest(c, "business_detail.type must be one of: CORPORATION, PARTNERSHIP, SOLE_PROPRIETORSHIP, INDIVIDUAL, FOREIGN, FOREIGN_SEC, FOREIGN_NONSEC")
+	}
 	if req.BusinessDetail.LegalName == "" {
 		return badRequest(c, "business_detail.legal_name is required")
 	}
 	if req.BusinessDetail.IndustryCategory == "" {
 		return badRequest(c, "business_detail.industry_category is required")
+	}
+	if !IsValidIndustryCategory(req.BusinessDetail.IndustryCategory) {
+		return badRequest(c, "business_detail.industry_category is not a valid Xendit industry category value")
 	}
 	if req.BusinessDetail.CountryOfOperation == "" {
 		req.BusinessDetail.CountryOfOperation = "ID"
