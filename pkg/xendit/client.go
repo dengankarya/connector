@@ -393,12 +393,12 @@ func (c *Client) do(ctx context.Context, method, path, forUserID string, body, o
 		}
 
 		c.logger.WithFields(logrus.Fields{
-			"method":      method,
-			"path":        path,
-			"status":      resp.StatusCode,
-			"body":        string(respBytes),
-			"attempt":     attempt + 1,
-		}).Debug("xendit: response")
+			"method":  method,
+			"path":    path,
+			"status":  resp.StatusCode,
+			"body":    string(respBytes),
+			"attempt": attempt + 1,
+		}).Info("xendit: response")
 
 		if resp.StatusCode == http.StatusTooManyRequests {
 			if attempt == maxRetries {
