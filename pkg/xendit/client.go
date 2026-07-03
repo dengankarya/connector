@@ -392,6 +392,14 @@ func (c *Client) do(ctx context.Context, method, path, forUserID string, body, o
 			return fmt.Errorf("read response: %w", err)
 		}
 
+		c.logger.WithFields(logrus.Fields{
+			"method":      method,
+			"path":        path,
+			"status":      resp.StatusCode,
+			"body":        string(respBytes),
+			"attempt":     attempt + 1,
+		}).Debug("xendit: response")
+
 		if resp.StatusCode == http.StatusTooManyRequests {
 			if attempt == maxRetries {
 				return fmt.Errorf("status %d: %s", resp.StatusCode, respBytes)
