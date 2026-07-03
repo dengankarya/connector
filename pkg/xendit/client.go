@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -344,49 +345,85 @@ func (c *Client) CreatePayout(_ context.Context, _ provider.CreatePayoutRequest)
 
 // ── HTTP helper ───────────────────────────────────────────────────────────────
 
-// do executes an authenticated Xendit API call.
+const (
+	maxRetries    = 3
+	retryBaseWait = 200 * time.Millisecond
+)
+
+// do executes an authenticated Xendit API call, retrying up to maxRetries times on HTTP 429.
+// Retry delay is taken from the Retry-After header when present, otherwise exponential backoff.
 // forUserID, when non-empty, sets the for-user-id header to scope the call to a sub-account.
 func (c *Client) do(ctx context.Context, method, path, forUserID string, body, out any) error {
-	var bodyReader io.Reader
+	var bodyBytes []byte
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("marshal request: %w", err)
 		}
-		bodyReader = bytes.NewReader(b)
+		bodyBytes = b
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bodyReader)
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
-	}
-
-	// Xendit uses HTTP Basic Auth: apiKey as username, empty password.
-	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(c.apiKey+":")))
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if forUserID != "" {
-		req.Header.Set("for-user-id", forUserID)
-	}
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("http: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read response: %w", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("status %d: %s", resp.StatusCode, respBytes)
-	}
-	if out != nil && len(respBytes) > 0 {
-		if err := json.Unmarshal(respBytes, out); err != nil {
-			return fmt.Errorf("decode response: %w", err)
+	for attempt := range maxRetries + 1 {
+		var bodyReader io.Reader
+		if bodyBytes != nil {
+			bodyReader = bytes.NewReader(bodyBytes)
 		}
+
+		req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bodyReader)
+		if err != nil {
+			return fmt.Errorf("build request: %w", err)
+		}
+
+		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(c.apiKey+":")))
+		if bodyBytes != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		if forUserID != "" {
+			req.Header.Set("for-user-id", forUserID)
+		}
+
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return fmt.Errorf("http: %w", err)
+		}
+		respBytes, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return fmt.Errorf("read response: %w", err)
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			if attempt == maxRetries {
+				return fmt.Errorf("status %d: %s", resp.StatusCode, respBytes)
+			}
+			wait := retryBaseWait * time.Duration(1<<attempt) // 200ms, 400ms, 800ms
+			if ra := resp.Header.Get("Retry-After"); ra != "" {
+				if secs, err := strconv.Atoi(ra); err == nil {
+					wait = time.Duration(secs) * time.Second
+				}
+			}
+			c.logger.WithFields(logrus.Fields{
+				"path":    path,
+				"attempt": attempt + 1,
+				"wait_ms": wait.Milliseconds(),
+			}).Warn("xendit: rate limited (429), retrying")
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(wait):
+			}
+			continue
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return fmt.Errorf("status %d: %s", resp.StatusCode, respBytes)
+		}
+		if out != nil && len(respBytes) > 0 {
+			if err := json.Unmarshal(respBytes, out); err != nil {
+				return fmt.Errorf("decode response: %w", err)
+			}
+		}
+		return nil
 	}
-	return nil
+	return fmt.Errorf("xendit: exhausted retries for %s %s", method, path)
 }
