@@ -3004,19 +3004,24 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "city": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "Jakarta"
                 },
                 "country": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "ID"
                 },
                 "postal_code": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "12190"
                 },
                 "province_state": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "DKI Jakarta"
                 },
                 "street_line1": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "Jl. Sudirman No. 1"
                 }
             }
         },
@@ -3024,28 +3029,34 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "country_of_operation": {
-                    "description": "\"ID\"",
-                    "type": "string"
+                    "type": "string",
+                    "example": "ID"
                 },
                 "date_of_registration": {
                     "description": "YYYY-MM-DD",
-                    "type": "string"
+                    "type": "string",
+                    "example": "2020-01-15"
                 },
                 "description": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "Online fashion store"
                 },
                 "industry_category": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "RETAIL"
                 },
                 "legal_name": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "PT Toko ABC"
                 },
                 "trading_name": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "Toko ABC"
                 },
                 "type": {
                     "description": "CORPORATION | PARTNERSHIP | SOLE_PROPRIETORSHIP | INDIVIDUAL",
-                    "type": "string"
+                    "type": "string",
+                    "example": "CORPORATION"
                 }
             }
         },
@@ -3164,13 +3175,16 @@ const docTemplate = `{
                     "$ref": "#/definitions/internal_account.AccountHolderBusinessDetail"
                 },
                 "email": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "merchant@example.com"
                 },
                 "phone_number": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "+6281234567890"
                 },
                 "website_url": {
-                    "type": "string"
+                    "type": "string",
+                    "example": "https://tokoabc.com"
                 }
             }
         },

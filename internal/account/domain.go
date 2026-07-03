@@ -225,22 +225,22 @@ type XenditGatewayClient interface {
 
 // AccountHolderBusinessDetail is the KYC business information for CreateAccountHolder.
 type AccountHolderBusinessDetail struct {
-	Type               string `json:"type"` // CORPORATION | PARTNERSHIP | SOLE_PROPRIETORSHIP | INDIVIDUAL
-	LegalName          string `json:"legal_name"`
-	TradingName        string `json:"trading_name,omitempty"`
-	Description        string `json:"description,omitempty"`
-	IndustryCategory   string `json:"industry_category,omitempty"`
-	DateOfRegistration string `json:"date_of_registration,omitempty"` // YYYY-MM-DD
-	CountryOfOperation string `json:"country_of_operation"`           // "ID"
+	Type               string `json:"type"                          example:"CORPORATION"` // CORPORATION | PARTNERSHIP | SOLE_PROPRIETORSHIP | INDIVIDUAL
+	LegalName          string `json:"legal_name"                    example:"PT Toko ABC"`
+	IndustryCategory   string `json:"industry_category"             example:"RETAIL"`
+	CountryOfOperation string `json:"country_of_operation"          example:"ID"`
+	TradingName        string `json:"trading_name,omitempty"        example:"Toko ABC"`
+	Description        string `json:"description,omitempty"         example:"Online fashion store"`
+	DateOfRegistration string `json:"date_of_registration,omitempty" example:"2020-01-15"` // YYYY-MM-DD
 }
 
 // AccountHolderAddress is the registered address for CreateAccountHolder.
 type AccountHolderAddress struct {
-	Country       string `json:"country"`
-	City          string `json:"city"`
-	ProvinceState string `json:"province_state,omitempty"`
-	StreetLine1   string `json:"street_line1"`
-	PostalCode    string `json:"postal_code"`
+	Country       string `json:"country"                  example:"ID"`
+	City          string `json:"city"                     example:"Jakarta"`
+	StreetLine1   string `json:"street_line1"             example:"Jl. Sudirman No. 1"`
+	PostalCode    string `json:"postal_code"              example:"12190"`
+	ProvinceState string `json:"province_state,omitempty" example:"DKI Jakarta"`
 }
 
 // CreateAccountHolderRequest is the input for CreateAccountHolder.
@@ -248,9 +248,9 @@ type AccountHolderAddress struct {
 type CreateAccountHolderRequest struct {
 	BusinessDetail AccountHolderBusinessDetail `json:"business_detail"`
 	Address        AccountHolderAddress        `json:"address"`
-	Email          string                      `json:"email"`
-	PhoneNumber    string                      `json:"phone_number"`
-	WebsiteURL     string                      `json:"website_url,omitempty"`
+	Email          string                      `json:"email"                   example:"merchant@example.com"`
+	PhoneNumber    string                      `json:"phone_number"            example:"+6281234567890"`
+	WebsiteURL     string                      `json:"website_url,omitempty"   example:"https://tokoabc.com"`
 }
 
 // XenditAccountInfo holds the live account status returned by Xendit's GET /v2/accounts/{id}.

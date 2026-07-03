@@ -604,34 +604,45 @@ definitions:
   internal_account.AccountHolderAddress:
     properties:
       city:
+        example: Jakarta
         type: string
       country:
+        example: ID
         type: string
       postal_code:
+        example: "12190"
         type: string
       province_state:
+        example: DKI Jakarta
         type: string
       street_line1:
+        example: Jl. Sudirman No. 1
         type: string
     type: object
   internal_account.AccountHolderBusinessDetail:
     properties:
       country_of_operation:
-        description: '"ID"'
+        example: ID
         type: string
       date_of_registration:
         description: YYYY-MM-DD
+        example: "2020-01-15"
         type: string
       description:
+        example: Online fashion store
         type: string
       industry_category:
+        example: RETAIL
         type: string
       legal_name:
+        example: PT Toko ABC
         type: string
       trading_name:
+        example: Toko ABC
         type: string
       type:
         description: CORPORATION | PARTNERSHIP | SOLE_PROPRIETORSHIP | INDIVIDUAL
+        example: CORPORATION
         type: string
     type: object
   internal_account.ActivityDetail:
@@ -718,10 +729,13 @@ definitions:
       business_detail:
         $ref: '#/definitions/internal_account.AccountHolderBusinessDetail'
       email:
+        example: merchant@example.com
         type: string
       phone_number:
+        example: "+6281234567890"
         type: string
       website_url:
+        example: https://tokoabc.com
         type: string
     type: object
   internal_account.CreateGatewaySubAccountBody:
