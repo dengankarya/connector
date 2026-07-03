@@ -342,14 +342,39 @@ type AccountHolderAddress struct {
 	ProvinceState string `json:"province_state,omitempty" example:"DKI Jakarta"`
 }
 
+// AccountHolderIndividualDetail represents one person (PIC or Incorporator) for CreateAccountHolder.
+type AccountHolderIndividualDetail struct {
+	Type         string `json:"type"                    example:"PIC"`           // PIC | Incorporator
+	Role         string `json:"role"                    example:"Owner"`         // e.g. Owner, Director
+	GivenNames   string `json:"given_names"             example:"Budi"`
+	Surname      string `json:"surname"                 example:"Santoso"`
+	PhoneNumber  string `json:"phone_number"            example:"+6281234567890"`
+	Email        string `json:"email"                   example:"budi@example.com"`
+	Nationality  string `json:"nationality"             example:"ID"`            // ISO 3166-2
+	PlaceOfBirth string `json:"place_of_birth,omitempty" example:"Jakarta"`
+	DateOfBirth  string `json:"date_of_birth,omitempty"  example:"1990-01-15"`   // YYYY-MM-DD
+	Gender       string `json:"gender,omitempty"         example:"MALE"`         // MALE | FEMALE | OTHER
+}
+
+// AccountHolderKYCDocument is one document entry in the kyc_documents array.
+// file_id must be obtained by uploading the document via Xendit's Upload File API first.
+type AccountHolderKYCDocument struct {
+	Country   string `json:"country"              example:"ID"`
+	Type      string `json:"type"                 example:"ID_NIB"`   // e.g. ID_NIB, ID_COMPANY_NPWP, ID_AKTA, ID_NATIONAL_ID_KTP
+	FileID    string `json:"file_id"              example:"<file_id from Xendit Upload API>"`
+	ExpiresAt string `json:"expires_at,omitempty" example:"2030-12-31"` // YYYY-MM-DD
+}
+
 // CreateAccountHolderRequest is the input for CreateAccountHolder.
 // Defined here (not in pkg/xendit) so the interface can reference it without circular imports.
 type CreateAccountHolderRequest struct {
-	BusinessDetail AccountHolderBusinessDetail `json:"business_detail"`
-	Address        AccountHolderAddress        `json:"address"`
-	Email          string                      `json:"email"                   example:"merchant@example.com"`
-	PhoneNumber    string                      `json:"phone_number"            example:"+6281234567890"`
-	WebsiteURL     string                      `json:"website_url,omitempty"   example:"https://tokoabc.com"`
+	BusinessDetail    AccountHolderBusinessDetail    `json:"business_detail"`
+	IndividualDetails []AccountHolderIndividualDetail `json:"individual_details"`
+	KYCDocuments      []AccountHolderKYCDocument      `json:"kyc_documents"`
+	Address           AccountHolderAddress            `json:"address"`
+	Email             string                          `json:"email"                 example:"merchant@example.com"`
+	PhoneNumber       string                          `json:"phone_number"          example:"+6281234567890"`
+	WebsiteURL        string                          `json:"website_url,omitempty" example:"https://tokoabc.com"`
 }
 
 // XenditAccountInfo holds the live account status returned by Xendit's GET /v2/accounts/{id}.

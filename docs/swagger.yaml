@@ -645,6 +645,61 @@ definitions:
         example: CORPORATION
         type: string
     type: object
+  internal_account.AccountHolderIndividualDetail:
+    properties:
+      date_of_birth:
+        description: YYYY-MM-DD
+        example: "1990-01-15"
+        type: string
+      email:
+        example: budi@example.com
+        type: string
+      gender:
+        description: MALE | FEMALE | OTHER
+        example: MALE
+        type: string
+      given_names:
+        example: Budi
+        type: string
+      nationality:
+        description: ISO 3166-2
+        example: ID
+        type: string
+      phone_number:
+        example: "+6281234567890"
+        type: string
+      place_of_birth:
+        example: Jakarta
+        type: string
+      role:
+        description: e.g. Owner, Director
+        example: Owner
+        type: string
+      surname:
+        example: Santoso
+        type: string
+      type:
+        description: PIC | Incorporator
+        example: PIC
+        type: string
+    type: object
+  internal_account.AccountHolderKYCDocument:
+    properties:
+      country:
+        example: ID
+        type: string
+      expires_at:
+        description: YYYY-MM-DD
+        example: "2030-12-31"
+        type: string
+      file_id:
+        example: <file_id from Xendit Upload API>
+        type: string
+      type:
+        description: e.g. ID_NIB, ID_COMPANY_NPWP, ID_AKTA, ID_NATIONAL_ID_KTP
+        example: ID_NIB
+        type: string
+    type: object
   internal_account.ActivityDetail:
     properties:
       amount:
@@ -731,6 +786,14 @@ definitions:
       email:
         example: merchant@example.com
         type: string
+      individual_details:
+        items:
+          $ref: '#/definitions/internal_account.AccountHolderIndividualDetail'
+        type: array
+      kyc_documents:
+        items:
+          $ref: '#/definitions/internal_account.AccountHolderKYCDocument'
+        type: array
       phone_number:
         example: "+6281234567890"
         type: string

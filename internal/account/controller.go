@@ -676,6 +676,39 @@ func (ctrl *controller) createXenditAccountHolder(c fiber.Ctx) error {
 	if req.Address.StreetLine1 == "" {
 		return badRequest(c, "address.street_line1 is required")
 	}
+	if len(req.IndividualDetails) == 0 {
+		return badRequest(c, "individual_details is required — at least one PIC must be provided")
+	}
+	hasPIC := false
+	for _, ind := range req.IndividualDetails {
+		if ind.Type == "PIC" {
+			hasPIC = true
+		}
+		if ind.GivenNames == "" {
+			return badRequest(c, "individual_details[].given_names is required")
+		}
+		if ind.Surname == "" {
+			return badRequest(c, "individual_details[].surname is required")
+		}
+		if ind.PhoneNumber == "" {
+			return badRequest(c, "individual_details[].phone_number is required")
+		}
+		if ind.Email == "" {
+			return badRequest(c, "individual_details[].email is required")
+		}
+		if ind.Nationality == "" {
+			return badRequest(c, "individual_details[].nationality is required")
+		}
+		if ind.Role == "" {
+			return badRequest(c, "individual_details[].role is required")
+		}
+		if ind.Type != "PIC" && ind.Type != "Incorporator" {
+			return badRequest(c, "individual_details[].type must be PIC or Incorporator")
+		}
+	}
+	if !hasPIC {
+		return badRequest(c, "individual_details must contain at least one entry with type PIC")
+	}
 
 	if err := ctrl.svc.CreateAndLinkAccountHolder(c.Context(), tenantID, req); err != nil {
 		switch {

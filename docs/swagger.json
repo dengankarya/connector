@@ -3057,6 +3057,79 @@
                 }
             }
         },
+        "internal_account.AccountHolderIndividualDetail": {
+            "type": "object",
+            "properties": {
+                "date_of_birth": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string",
+                    "example": "1990-01-15"
+                },
+                "email": {
+                    "type": "string",
+                    "example": "budi@example.com"
+                },
+                "gender": {
+                    "description": "MALE | FEMALE | OTHER",
+                    "type": "string",
+                    "example": "MALE"
+                },
+                "given_names": {
+                    "type": "string",
+                    "example": "Budi"
+                },
+                "nationality": {
+                    "description": "ISO 3166-2",
+                    "type": "string",
+                    "example": "ID"
+                },
+                "phone_number": {
+                    "type": "string",
+                    "example": "+6281234567890"
+                },
+                "place_of_birth": {
+                    "type": "string",
+                    "example": "Jakarta"
+                },
+                "role": {
+                    "description": "e.g. Owner, Director",
+                    "type": "string",
+                    "example": "Owner"
+                },
+                "surname": {
+                    "type": "string",
+                    "example": "Santoso"
+                },
+                "type": {
+                    "description": "PIC | Incorporator",
+                    "type": "string",
+                    "example": "PIC"
+                }
+            }
+        },
+        "internal_account.AccountHolderKYCDocument": {
+            "type": "object",
+            "properties": {
+                "country": {
+                    "type": "string",
+                    "example": "ID"
+                },
+                "expires_at": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string",
+                    "example": "2030-12-31"
+                },
+                "file_id": {
+                    "type": "string",
+                    "example": "\u003cfile_id from Xendit Upload API\u003e"
+                },
+                "type": {
+                    "description": "e.g. ID_NIB, ID_COMPANY_NPWP, ID_AKTA, ID_NATIONAL_ID_KTP",
+                    "type": "string",
+                    "example": "ID_NIB"
+                }
+            }
+        },
         "internal_account.ActivityDetail": {
             "type": "object",
             "properties": {
@@ -3174,6 +3247,18 @@
                 "email": {
                     "type": "string",
                     "example": "merchant@example.com"
+                },
+                "individual_details": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_account.AccountHolderIndividualDetail"
+                    }
+                },
+                "kyc_documents": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_account.AccountHolderKYCDocument"
+                    }
                 },
                 "phone_number": {
                     "type": "string",
