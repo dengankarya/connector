@@ -11,6 +11,7 @@ import (
 	"github.com/dengankarya/connector/internal/payment/jobs"
 	"github.com/dengankarya/connector/internal/payment/provider"
 	paymentservice "github.com/dengankarya/connector/internal/payment/service"
+	"github.com/dengankarya/connector/internal/payment/webhook"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -20,27 +21,35 @@ import (
 // ─── Payment module controller ───────────────────────────────────────────────
 
 type paymentController struct {
-	svc       *paymentservice.PaymentService
-	providers map[string]provider.PaymentProvider // keyed by provider name (e.g. "xendit", "doku")
-	enqueuer  *asynq.Client
-	logger    *logrus.Logger
+	svc              *paymentservice.PaymentService
+	providers        map[string]provider.PaymentProvider // keyed by provider name (e.g. "xendit", "doku")
+	enqueuer         *asynq.Client
+	webhookProcessor *webhook.Processor // optional; used by dp-sync to confirm payment + record ledger
+	logger           *logrus.Logger
 }
 
 // RegisterPaymentHandlers registers the payment transaction endpoints.
 // providers is a map of configured payment providers; POST / is only registered when at least one is present.
+// webhookProc may be nil; when set it enables the POST /:id/dp-sync endpoint to confirm payments.
 func RegisterPaymentHandlers(
 	mux fiber.Router,
 	svc *paymentservice.PaymentService,
 	providers map[string]provider.PaymentProvider,
 	enqueuer *asynq.Client,
 	logger *logrus.Logger,
+	webhookProc ...*webhook.Processor,
 ) {
-	ctrl := &paymentController{svc: svc, providers: providers, enqueuer: enqueuer, logger: logger}
+	var wp *webhook.Processor
+	if len(webhookProc) > 0 {
+		wp = webhookProc[0]
+	}
+	ctrl := &paymentController{svc: svc, providers: providers, enqueuer: enqueuer, webhookProcessor: wp, logger: logger}
 
 	mux.Post("/cancel-schedule", ctrl.scheduleOrderCancellation)
 	mux.Post("/manual", ctrl.createManualPayment)
 	mux.Post("/manual/:id/confirm", ctrl.confirmManualPayment)
 	mux.Get("/:id", ctrl.getPayment)
+	mux.Post("/:id/dp-sync", ctrl.syncDurianPay)
 
 	if len(providers) > 0 {
 		mux.Post("/", ctrl.createPayment)
@@ -393,6 +402,93 @@ func (ctrl *paymentController) scheduleOrderCancellation(c fiber.Ctx) error {
 		Data: map[string]any{
 			"order_number":     body.OrderNumber,
 			"should_expire_at": body.ShouldExpireAt,
+		},
+	})
+}
+
+// syncDurianPay godoc
+//
+//	@Summary		Sync DurianPay payment status
+//	@Description	Fetches the live payment status from DurianPay for the given transaction and returns both the connector DB status and the live DurianPay status. Use this as a fallback when a webhook delivery is delayed — the caller can act on dp_status="paid" even before the connector processes the webhook.
+//	@Tags			Payments
+//	@Produce		json
+//	@Param			X-Tenant-ID	header		int64			true	"Tenant ID"
+//	@Param			id			path		string			true	"Transaction UUID"
+//	@Success		200			{object}	common.Response	"Status response"
+//	@Failure		400			{object}	common.Response	"Invalid request"
+//	@Failure		404			{object}	common.Response	"Transaction not found"
+//	@Failure		503			{object}	common.Response	"DurianPay provider not configured"
+//	@Security		ApiKeyAuth
+//	@Router			/payments/{id}/dp-sync [post]
+func (ctrl *paymentController) syncDurianPay(c fiber.Ctx) error {
+	tenantID := mustParseIntHeader(c, "X-Tenant-ID")
+	if tenantID == 0 {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: "X-Tenant-ID header is required",
+		})
+	}
+
+	txnID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: "invalid transaction id",
+		})
+	}
+
+	txn, err := ctrl.svc.GetPayment(c.Context(), tenantID, txnID)
+	if err != nil {
+		var nf domain.ErrNotFound
+		if ok := isErrNotFound(err, &nf); ok {
+			return c.Status(http.StatusNotFound).JSON(common.Response{
+				Status: "Not Found", Error: nf.Error(),
+			})
+		}
+		return c.Status(http.StatusInternalServerError).JSON(common.Response{
+			Status: "Internal Server Error", Error: err.Error(),
+		})
+	}
+
+	// Only DurianPay transactions can be synced this way.
+	if txn.Provider != "durianpay" {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: "transaction is not a DurianPay payment",
+		})
+	}
+
+	prov, ok := ctrl.providers["durianpay"]
+	if !ok {
+		return c.Status(http.StatusServiceUnavailable).JSON(common.Response{
+			Status: "Service Unavailable", Error: "DurianPay provider not configured",
+		})
+	}
+
+	inv, err := prov.GetInvoice(c.Context(), txn.ProviderInvoiceID)
+	if err != nil {
+		ctrl.logger.WithError(err).WithField("provider_invoice_id", txn.ProviderInvoiceID).
+			Error("dp-sync: GetInvoice failed")
+		return c.Status(http.StatusInternalServerError).JSON(common.Response{
+			Status: "Internal Server Error", Error: "failed to fetch payment status from DurianPay",
+		})
+	}
+
+	// If DurianPay says paid but the connector DB hasn't been updated yet (webhook delay),
+	// confirm the payment now: transition status, record ledger entries, notify Tokokarya.
+	if inv.Status == "paid" && txn.Status == domain.StatusAwaitingPayment && ctrl.webhookProcessor != nil {
+		updated, cerr := ctrl.webhookProcessor.ConfirmGatewayPayment(c.Context(), tenantID, txn.ID, inv.PaidAt)
+		if cerr != nil {
+			ctrl.logger.WithError(cerr).Error("dp-sync: ConfirmGatewayPayment failed")
+			// Non-fatal: return the dp status so the frontend can still react.
+		} else if updated != nil {
+			txn = updated
+		}
+	}
+
+	return c.Status(http.StatusOK).JSON(common.Response{
+		Status: "OK",
+		Data: map[string]any{
+			"connector_status": txn.Status,
+			"dp_status":        inv.Status, // "paid" | "awaiting_payment" | "expired" | "failed"
+			"paid_at":          inv.PaidAt,
 		},
 	})
 }

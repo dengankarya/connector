@@ -108,6 +108,14 @@ definitions:
       payment_channel:
         description: e.g. "BRI", "MANDIRI", "OVO"
         type: string
+      payment_data:
+        additionalProperties: {}
+        description: |-
+          PaymentData holds provider-specific payment instructions returned at charge time.
+          For DurianPay VA: {"va_number": "...", "payment_instruction": {...}}.
+          For DurianPay QRIS: {"qr_string": "...", "qr_code": "..."}.
+          For DurianPay EWALLET: {"checkout_url": "..."}.
+        type: object
       payment_method:
         description: e.g. "BANK_TRANSFER", "QRIS", "CREDIT_CARD"
         type: string

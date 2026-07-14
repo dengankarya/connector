@@ -76,6 +76,12 @@ type PaymentTransaction struct {
 	XenditWithholdingTax int64 `json:"xendit_withholding_tax,omitempty"`
 	ThirdPartyWHT        int64 `json:"third_party_wht,omitempty"`
 
+	// PaymentData holds provider-specific payment instructions returned at charge time.
+	// For DurianPay VA: {"va_number": "...", "payment_instruction": {...}}.
+	// For DurianPay QRIS: {"qr_string": "...", "qr_code": "..."}.
+	// For DurianPay EWALLET: {"checkout_url": "..."}.
+	PaymentData map[string]any `json:"payment_data,omitempty"`
+
 	ExpiresAt               *time.Time `json:"expires_at,omitempty"`
 	PaidAt                  *time.Time `json:"paid_at,omitempty"`
 	SettledAt               *time.Time `json:"settled_at,omitempty"`

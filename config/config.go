@@ -40,6 +40,9 @@ type Configuration struct {
 	XenditBaseURL       string `env:"XENDIT_BASE_URL" envDefault:"https://api.xendit.co"`
 	XenditCallbackToken string `env:"XENDIT_CALLBACK_TOKEN"`
 
+	DurianPayAPIKey  string `env:"DURIANPAY_API_KEY"`
+	DurianPayBaseURL string `env:"DURIANPAY_BASE_URL" envDefault:"https://api.durianpay.id"`
+
 	WebhookBaseURL string `env:"WEBHOOK_BASE_URL"` // base URL for webhook notifications (e.g. https://connector.example.com)
 }
 

@@ -30,6 +30,7 @@ import (
 	"github.com/dengankarya/connector/pkg/biteship"
 	"github.com/dengankarya/connector/pkg/dbconn"
 	"github.com/dengankarya/connector/pkg/doku"
+	"github.com/dengankarya/connector/pkg/durianpay"
 	"github.com/dengankarya/connector/pkg/geoapify"
 	"github.com/dengankarya/connector/pkg/tokokarya"
 	"github.com/dengankarya/connector/pkg/wilayah"
@@ -86,8 +87,9 @@ func main() {
 		accountMod       *account.Module
 		shippingMod      *shipping.Module
 		cancelExpiredJob *jobs.CancelExpiredOrderJob
-		dokuClient       *doku.Client   // shared: account gateway + payment provider
-		xenditClient     *xendit.Client // shared: account gateway + payment provider
+		dokuClient       *doku.Client      // shared: account gateway + payment provider
+		xenditClient     *xendit.Client    // shared: account gateway + payment provider
+		durianpayClient  *durianpay.Client // payment provider only (no sub-accounts)
 	)
 
 	if cfg.DatabaseDSN != "" {
@@ -109,6 +111,11 @@ func main() {
 		if cfg.XenditAPIKey != "" {
 			xenditClient = xendit.NewClient(cfg.XenditAPIKey, cfg.XenditBaseURL, cfg.XenditCallbackToken, cfg.WebhookBaseURL, log.StandardLogger())
 		}
+
+		// Initialize DurianPay client if configured
+		if cfg.DurianPayAPIKey != "" {
+			durianpayClient = durianpay.NewClient(cfg.DurianPayAPIKey, cfg.DurianPayBaseURL, log.StandardLogger())
+		}
 	}
 
 	// ── asynq client (enqueuer) + embedded worker server ───────────────────
@@ -126,6 +133,9 @@ func main() {
 	}
 	if xenditClient != nil {
 		paymentProviders["xendit"] = xenditClient
+	}
+	if durianpayClient != nil {
+		paymentProviders["durianpay"] = durianpayClient
 	}
 
 	// Wire modules (payment, account, shipping) with all their components
@@ -214,6 +224,11 @@ func main() {
 		webhook.RegisterIngestHandler(apiRootGroup, "/webhook/doku", dokuClient, paymentMod.EventRepo, paymentMod.WebhookLogRepo, asynqClient, log.StandardLogger(), nil)
 	}
 
+	// ── DurianPay payment webhook — public, no API key check ─────────────────
+	if durianpayClient != nil && paymentMod.EventRepo != nil {
+		webhook.RegisterIngestHandler(apiRootGroup, "/webhook/durianpay", durianpayClient, paymentMod.EventRepo, paymentMod.WebhookLogRepo, asynqClient, log.StandardLogger(), nil)
+	}
+
 	// ── Xendit payment + account webhooks — public, no API key check ───────
 	if xenditClient != nil && paymentMod.EventRepo != nil {
 		var xenditAccountHandler webhook.AccountEventHandler
@@ -250,6 +265,7 @@ func main() {
 			paymentMod.Providers,
 			asynqClient,
 			log.StandardLogger(),
+			paymentMod.WebhookProcessor,
 		)
 	}
 

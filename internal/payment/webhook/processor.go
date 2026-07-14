@@ -207,6 +207,8 @@ func (p *Processor) handle(ctx context.Context, event *domain.WebhookEvent, txn 
 		return p.handleExpired(ctx, event, txn, log)
 	case "payment_session.failed":
 		return p.handleFailed(ctx, event, txn, log, event.FailureCode)
+	case "payment.settled":
+		return p.handleSettled(ctx, txn, log)
 	case "payment.authorization":
 		log.Info("payment authorised — no action required for automatic capture")
 		return nil
@@ -276,7 +278,7 @@ func (p *Processor) handlePaid(ctx context.Context, event *domain.WebhookEvent, 
 		return fmt.Errorf("update transaction to paid: %w", err)
 	}
 
-	if err := p.ledger.RecordPayment(ctx, txn, event.ID); err != nil {
+	if err := p.ledger.RecordPayment(ctx, txn, &event.ID); err != nil {
 		return fmt.Errorf("record payment ledger: %w", err)
 	}
 
@@ -309,6 +311,26 @@ func (p *Processor) handleExpired(ctx context.Context, _ *domain.WebhookEvent, t
 	return nil
 }
 
+func (p *Processor) handleSettled(ctx context.Context, txn *domain.PaymentTransaction, log *logrus.Entry) error {
+	if err := txn.TransitionTo(domain.StatusSettled); err != nil {
+		if errors.As(err, new(domain.ErrAlreadyInState)) {
+			log.Info("transaction already settled — idempotent")
+			return nil
+		}
+		return fmt.Errorf("transition to settled: %w", err)
+	}
+
+	now := time.Now().UTC()
+	txn.SettledAt = &now
+
+	if err := p.txnRepo.Update(ctx, txn); err != nil {
+		return fmt.Errorf("update transaction to settled: %w", err)
+	}
+
+	log.WithField("status", txn.Status).Info("transaction marked settled via settlement webhook")
+	return nil
+}
+
 func (p *Processor) handleFailed(ctx context.Context, _ *domain.WebhookEvent, txn *domain.PaymentTransaction, log *logrus.Entry, failureCode string) error {
 	if err := txn.TransitionTo(domain.StatusFailed); err != nil {
 		if errors.As(err, new(domain.ErrAlreadyInState)) {
@@ -327,6 +349,73 @@ func (p *Processor) handleFailed(ctx context.Context, _ *domain.WebhookEvent, tx
 		"failure_code": failureCode,
 	}).Info("transaction marked failed")
 	return nil
+}
+
+// ConfirmGatewayPayment transitions a provider payment to paid, records ledger entries,
+// and forwards the event to Tokokarya — without requiring a webhook event row.
+// Used by the dp-sync endpoint when DurianPay confirms payment but the webhook hasn't fired yet.
+// Idempotent: returns nil if the transaction is already paid.
+func (p *Processor) ConfirmGatewayPayment(ctx context.Context, tenantID int64, txnID uuid.UUID, paidAt *time.Time) (*domain.PaymentTransaction, error) {
+	log := p.logger.WithFields(logrus.Fields{
+		"component":      "webhook_processor",
+		"operation":      "confirm_gateway_payment",
+		"tenant_id":      tenantID,
+		"transaction_id": txnID,
+	})
+
+	var txnSnapshot *domain.PaymentTransaction
+
+	err := p.txRunner.RunInTx(ctx, func(txCtx context.Context) error {
+		txn, err := p.txnRepo.GetByIDForUpdate(txCtx, txnID)
+		if err != nil {
+			return err
+		}
+		if txn.TenantID != tenantID {
+			return domain.ErrNotFound{Entity: "payment_transaction", ID: txnID.String()}
+		}
+
+		if err := txn.TransitionTo(domain.StatusPaid); err != nil {
+			if errors.As(err, new(domain.ErrAlreadyInState)) {
+				log.Info("transaction already paid — idempotent")
+				txnSnapshot = txn
+				return nil
+			}
+			return fmt.Errorf("transition to paid: %w", err)
+		}
+
+		now := time.Now().UTC()
+		if paidAt != nil {
+			txn.PaidAt = paidAt
+		} else {
+			txn.PaidAt = &now
+		}
+
+		if err := p.txnRepo.Update(txCtx, txn); err != nil {
+			return fmt.Errorf("update transaction to paid: %w", err)
+		}
+		// No webhook event for dp-sync — pass nil event ID.
+		if err := p.ledger.RecordPayment(txCtx, txn, nil); err != nil {
+			return fmt.Errorf("record payment ledger: %w", err)
+		}
+
+		log.WithFields(logrus.Fields{
+			"amount":   txn.Amount,
+			"currency": txn.Currency,
+		}).Info("gateway payment confirmed via dp-sync, ledger updated")
+
+		txnSnapshot = txn
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Post-commit: forward to Tokokarya (fire-and-forget).
+	if p.forwarder != nil && txnSnapshot != nil {
+		go p.forwardToTokokarya(context.Background(), txnSnapshot, log)
+	}
+
+	return txnSnapshot, nil
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────

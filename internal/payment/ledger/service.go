@@ -40,8 +40,10 @@ func New(repo Repository, logger *logrus.Logger) *Service {
 //	CR  platform_fee        platform_fee (if > 0, platform revenue)
 //
 // All amounts must be positive. The journal is validated before writing.
-func (s *Service) RecordPayment(ctx context.Context, txn *domain.PaymentTransaction, eventID uuid.UUID) error {
-	journal, err := buildPaymentJournal(txn, &eventID)
+// RecordPayment creates ledger entries for a payment received event (invoice.paid).
+// eventID is nil when payment is confirmed via polling/dp-sync rather than a webhook event.
+func (s *Service) RecordPayment(ctx context.Context, txn *domain.PaymentTransaction, eventID *uuid.UUID) error {
+	journal, err := buildPaymentJournal(txn, eventID)
 	if err != nil {
 		return err
 	}

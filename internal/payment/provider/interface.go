@@ -51,6 +51,14 @@ type Invoice struct {
 	Currency               string
 	ExpiresAt              *time.Time
 	AllowedPaymentChannels []string // set on GET /sessions — used as payment_method fallback
+	// DurianPay direct-charge fields — only set when a direct charge method is used.
+	VANumber           string         // Virtual Account number shown to customer
+	PaymentInstruction map[string]any // full payment_instruction object from DurianPay (multilingual steps)
+	QRString           string         // base64 PNG QR image (QRIS)
+	QRCode             string         // EMV QR string (QRIS)
+	PaymentMethod      string         // derived method type: "VA", "EWALLET", "QRIS"
+	PaymentChannel     string         // specific channel: "BCA", "OVO", "GOPAY", etc.
+	PaidAt             *time.Time     // set when DurianPay confirms payment
 }
 
 // CreateRefundRequest is the provider-agnostic refund request.

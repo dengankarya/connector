@@ -2365,6 +2365,11 @@ const docTemplate = `{
                     "description": "e.g. \"BRI\", \"MANDIRI\", \"OVO\"",
                     "type": "string"
                 },
+                "payment_data": {
+                    "description": "PaymentData holds provider-specific payment instructions returned at charge time.\nFor DurianPay VA: {\"va_number\": \"...\", \"payment_instruction\": {...}}.\nFor DurianPay QRIS: {\"qr_string\": \"...\", \"qr_code\": \"...\"}.\nFor DurianPay EWALLET: {\"checkout_url\": \"...\"}.",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
                 "payment_method": {
                     "description": "e.g. \"BANK_TRANSFER\", \"QRIS\", \"CREDIT_CARD\"",
                     "type": "string"

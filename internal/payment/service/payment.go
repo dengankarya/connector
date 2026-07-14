@@ -356,6 +356,8 @@ func (s *PaymentService) CreateProviderPayment(ctx context.Context, prov provide
 		Provider:          prov.ProviderName(),
 		ProviderInvoiceID: invoice.ProviderInvoiceID,
 		CheckoutURL:       invoice.CheckoutURL,
+		PaymentMethod:     invoice.PaymentMethod,
+		PaymentChannel:    invoice.PaymentChannel,
 		Amount:            req.Amount,
 		Currency:          req.Currency,
 		PlatformFee:       req.PlatformFee,
@@ -365,6 +367,24 @@ func (s *PaymentService) CreateProviderPayment(ctx context.Context, prov provide
 		Description:       req.Description,
 		ExpiresAt:         invoice.ExpiresAt,
 		Metadata:          req.Metadata,
+	}
+
+	// Populate payment_data for direct-charge providers (DurianPay VA/QRIS/EWALLET).
+	if invoice.VANumber != "" || invoice.QRString != "" || invoice.QRCode != "" {
+		pd := map[string]any{}
+		if invoice.VANumber != "" {
+			pd["va_number"] = invoice.VANumber
+		}
+		if invoice.PaymentInstruction != nil {
+			pd["payment_instruction"] = invoice.PaymentInstruction
+		}
+		if invoice.QRString != "" {
+			pd["qr_string"] = invoice.QRString
+		}
+		if invoice.QRCode != "" {
+			pd["qr_code"] = invoice.QRCode
+		}
+		txn.PaymentData = pd
 	}
 
 	if err := s.txnRepo.Create(ctx, txn); err != nil {

@@ -34,6 +34,7 @@ func (r *TransactionRepository) Create(ctx context.Context, txn *domain.PaymentT
 	txn.Version = 1
 
 	metaJSON, metaValid := marshalJSON(txn.Metadata)
+	payDataJSON, payDataValid := marshalJSON(txn.PaymentData)
 
 	q := `
 		INSERT INTO payment_transactions (
@@ -41,15 +42,15 @@ func (r *TransactionRepository) Create(ctx context.Context, txn *domain.PaymentT
 			provider, provider_invoice_id, provider_payment_id, checkout_url,
 			payment_method, payment_channel,
 			amount, currency, platform_fee, shipping_fee, merchant_amount,
-			status, description, metadata,
+			status, description, metadata, payment_data,
 			expires_at, created_at, updated_at, version
 		) VALUES (
 			$1, $2, $3, $4,
 			$5, $6, $7, $8,
 			$9, $10,
 			$11, $12, $13, $14, $15,
-			$16, $17, $18::jsonb,
-			$19, $20, $21, $22
+			$16, $17, $18::jsonb, $19::jsonb,
+			$20, $21, $22, $23
 		)
 		ON CONFLICT (tenant_id, idempotency_key) DO NOTHING`
 
@@ -58,7 +59,7 @@ func (r *TransactionRepository) Create(ctx context.Context, txn *domain.PaymentT
 		txn.Provider, nilIfEmpty(txn.ProviderInvoiceID), nilIfEmpty(txn.ProviderPaymentID), nilIfEmpty(txn.CheckoutURL),
 		nilIfEmpty(txn.PaymentMethod), nilIfEmpty(txn.PaymentChannel),
 		txn.Amount, txn.Currency, txn.PlatformFee, txn.ShippingFee, txn.MerchantAmount,
-		string(txn.Status), nilIfEmpty(txn.Description), jsonParam(metaJSON, metaValid),
+		string(txn.Status), nilIfEmpty(txn.Description), jsonParam(metaJSON, metaValid), jsonParam(payDataJSON, payDataValid),
 		txn.ExpiresAt, txn.CreatedAt, txn.UpdatedAt, txn.Version,
 	)
 	if err != nil {
@@ -370,6 +371,7 @@ const txnColumns = `
 	status,
 	COALESCE(description, ''),
 	metadata,
+	payment_data,
 	expires_at, paid_at, settled_at,
 	xendit_fee, vat, xendit_withholding_tax, third_party_wht,
 	estimated_settlement_time,
@@ -380,7 +382,7 @@ func scanTransaction(row pgx.Row) (*domain.PaymentTransaction, error) {
 		t                                               domain.PaymentTransaction
 		idStr                                           string
 		status                                          string
-		metaBytes                                       []byte
+		metaBytes, payDataBytes                         []byte
 		expiresAt, paidAt, settledAt, estSettlementTime *time.Time
 	)
 	err := row.Scan(
@@ -395,6 +397,7 @@ func scanTransaction(row pgx.Row) (*domain.PaymentTransaction, error) {
 		&status,
 		&t.Description,
 		&metaBytes,
+		&payDataBytes,
 		&expiresAt, &paidAt, &settledAt,
 		&t.XenditFee, &t.VAT, &t.XenditWithholdingTax, &t.ThirdPartyWHT,
 		&estSettlementTime,
@@ -414,6 +417,7 @@ func scanTransaction(row pgx.Row) (*domain.PaymentTransaction, error) {
 	t.SettledAt = settledAt
 	t.EstimatedSettlementTime = estSettlementTime
 	_ = unmarshalJSON(metaBytes, &t.Metadata)
+	_ = unmarshalJSON(payDataBytes, &t.PaymentData)
 	return &t, nil
 }
 
