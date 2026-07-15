@@ -62,7 +62,9 @@ type orderCustomer struct {
 }
 
 type createOrderResponse struct {
-	ID string `json:"id"` // e.g. "ord_0dIWbuDJQ84078"
+	Data struct {
+		ID string `json:"id"` // e.g. "ord_0dIWbuDJQ84078"
+	} `json:"data"`
 }
 
 type chargeRequest struct {
@@ -153,7 +155,7 @@ func (c *Client) CreateInvoice(ctx context.Context, req provider.CreateInvoiceRe
 	}
 
 	inner := chargeInner{
-		OrderID:    orderResp.ID,
+		OrderID:    orderResp.Data.ID,
 		Amount:     amountStr,
 		Name:       req.CustomerName,
 		BankCode:   bankCode,
@@ -168,7 +170,7 @@ func (c *Client) CreateInvoice(ctx context.Context, req provider.CreateInvoiceRe
 
 	c.logger.WithFields(logrus.Fields{
 		"method":      "CreateInvoice",
-		"order_id":    orderResp.ID,
+		"order_id":    orderResp.Data.ID,
 		"method_type": methodType,
 		"bank_code":   bankCode,
 		"wallet_type": walletType,
