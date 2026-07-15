@@ -1947,6 +1947,48 @@ paths:
       summary: Get payment transaction
       tags:
       - Payments
+  /payments/{id}/dp-sync:
+    post:
+      description: Fetches the live payment status from DurianPay for the given transaction
+        and returns both the connector DB status and the live DurianPay status. Use
+        this as a fallback when a webhook delivery is delayed — the caller can act
+        on dp_status="paid" even before the connector processes the webhook.
+      parameters:
+      - description: Tenant ID
+        format: int64
+        in: header
+        name: X-Tenant-ID
+        required: true
+        type: integer
+      - description: Transaction UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Status response
+          schema:
+            $ref: '#/definitions/common.Response'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: Transaction not found
+          schema:
+            $ref: '#/definitions/common.Response'
+        "503":
+          description: DurianPay provider not configured
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Sync DurianPay payment status
+      tags:
+      - Payments
   /payments/cancel-schedule:
     post:
       consumes:
