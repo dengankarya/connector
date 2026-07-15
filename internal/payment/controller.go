@@ -22,7 +22,7 @@ import (
 
 type paymentController struct {
 	svc              *paymentservice.PaymentService
-	providers        map[string]provider.PaymentProvider // keyed by provider name (e.g. "xendit", "doku")
+	providers        map[string]provider.PaymentProvider // keyed by provider name (e.g. "durianpay")
 	enqueuer         *asynq.Client
 	webhookProcessor *webhook.Processor // optional; used by dp-sync to confirm payment + record ledger
 	logger           *logrus.Logger
@@ -59,7 +59,7 @@ func RegisterPaymentHandlers(
 // createPayment godoc
 //
 //	@Summary		Create payment
-//	@Description	Creates a payment session via the configured provider (DOKU Checkout) and returns the checkout URL.
+//	@Description	Creates a payment session via the configured provider and returns the checkout URL or VA/QRIS details.
 //	@Tags			Payments
 //	@Accept			json
 //	@Produce		json

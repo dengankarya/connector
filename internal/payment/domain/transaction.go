@@ -56,10 +56,10 @@ type PaymentTransaction struct {
 	TenantID          int64             `json:"tenant_id,omitempty"`
 	OrderNumber       string            `json:"order_number,omitempty"` // Tokokarya order number (string, not UUID)
 	IdempotencyKey    string            `json:"idempotency_key,omitempty"`
-	Provider          string            `json:"provider,omitempty"`            // "xendit", "midtrans", etc.
-	ProviderInvoiceID string            `json:"provider_invoice_id,omitempty"` // Xendit payment_session_id (ps-xxx)
-	ProviderPaymentID string            `json:"provider_payment_id,omitempty"` // Xendit payment_id (py-xxx); populated on payment.capture
-	CheckoutURL       string            `json:"checkout_url,omitempty"`        // Xendit invoice payment page URL returned to the caller
+	Provider          string            `json:"provider,omitempty"`            // "durianpay", etc.
+	ProviderInvoiceID string            `json:"provider_invoice_id,omitempty"` // provider payment session ID
+	ProviderPaymentID string            `json:"provider_payment_id,omitempty"` // provider payment ID; populated on payment capture
+	CheckoutURL       string            `json:"checkout_url,omitempty"`        // payment page URL returned to the caller
 	PaymentMethod     string            `json:"payment_method,omitempty"`      // e.g. "BANK_TRANSFER", "QRIS", "CREDIT_CARD"
 	PaymentChannel    string            `json:"payment_channel,omitempty"`     // e.g. "BRI", "MANDIRI", "OVO"
 	Amount            int64             `json:"amount,omitempty"`              // gross amount (merchant_amount + platform_fee + shipping_fee)
@@ -70,8 +70,8 @@ type PaymentTransaction struct {
 	Status            PaymentStatus     `json:"status,omitempty"`
 	Description       string            `json:"description,omitempty"`
 	Metadata          map[string]string `json:"metadata,omitempty"`
-	// Fee breakdown — populated by the settlement sync job after Xendit confirms settlement.
-	XenditFee            int64 `json:"xendit_fee,omitempty"`
+	// Fee breakdown — populated after payment gateway confirms settlement.
+	XenditFee            int64 `json:"xendit_fee,omitempty"` // legacy column name; kept for DB compatibility
 	VAT                  int64 `json:"vat,omitempty"`
 	XenditWithholdingTax int64 `json:"xendit_withholding_tax,omitempty"`
 	ThirdPartyWHT        int64 `json:"third_party_wht,omitempty"`

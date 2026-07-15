@@ -8,33 +8,27 @@ import (
 
 // Module contains all account-related services.
 type Module struct {
-	Service      *Service
-	Repository   *Repository         // exposed for webhook handler construction in main
-	XenditClient XenditGatewayClient // exposed so RegisterHandlers can serve the GetAccount route
+	Service    *Service
+	Repository *Repository // exposed for webhook handler construction in main
 }
 
 // NewModule constructs the account service.
-// dokuClient and xenditClient may be nil when the respective gateway is not configured.
 func NewModule(
 	pool *pgxpool.Pool,
 	txRunner *postgres.TxRunner,
-	dokuClient GatewayClient,
-	xenditClient XenditGatewayClient,
 	logger *logrus.Logger,
 ) *Module {
 	if pool == nil {
 		return &Module{
-			Service:      NewService(nil, nil, nil, nil, logger),
-			XenditClient: xenditClient,
+			Service: NewService(nil, nil, logger),
 		}
 	}
 
 	repo := NewRepository(pool)
-	service := NewService(repo, txRunner, dokuClient, xenditClient, logger)
+	service := NewService(repo, txRunner, logger)
 
 	return &Module{
-		Service:      service,
-		Repository:   repo,
-		XenditClient: xenditClient,
+		Service:    service,
+		Repository: repo,
 	}
 }

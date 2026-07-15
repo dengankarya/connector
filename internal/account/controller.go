@@ -26,23 +26,19 @@ var (
 )
 
 // RegisterHandlers mounts all account endpoints on mux.
-// adminOnly is applied to operator-only mutations (topup, payout); pass adminRequest(cfg) from main.
+// adminOnly is applied to operator-only mutations (topup); pass adminRequest(cfg) from main.
 //
 //	GET  /accounts/transactions               unified activity feed
 //	GET  /accounts/transactions/:id           detail with ledger entries
-//	GET  /accounts/balance                    unified balance (shipping + payment + gateway)
+//	GET  /accounts/balance                    unified balance (shipping + payment)
 //	POST /accounts/balance/topup              credit available balance  [admin only]
 //	GET  /accounts/balance/payments           transaction-derived payment settlement balance
 //	GET  /accounts/holds                      list holds
 //	POST /accounts/holds                      create a hold for a draft order
 //	POST /accounts/holds/:id/confirm          confirm shipment, disburse hold
 //	POST /accounts/holds/:id/release          cancel order, return hold to available
-//	POST /accounts/gateway/sub-account        provision Doku sub-account for tenant
-//	POST /accounts/gateway/payout             send payout via Doku  [admin only]
-//	POST /accounts/gateway/xendit/sub-account provision Xendit MANAGED sub-account for tenant
-//	GET  /accounts/gateway/xendit/sub-account/:id fetch live Xendit account status
-func RegisterHandlers(mux fiber.Router, svc *Service, xenditClient XenditGatewayClient, adminOnly fiber.Handler) {
-	ctrl := &controller{svc: svc, xenditClient: xenditClient}
+func RegisterHandlers(mux fiber.Router, svc *Service, adminOnly fiber.Handler) {
+	ctrl := &controller{svc: svc}
 
 	mux.Get("/transactions", ctrl.listTransactions)
 	mux.Get("/transactions/:id", ctrl.getTransaction)
@@ -53,19 +49,10 @@ func RegisterHandlers(mux fiber.Router, svc *Service, xenditClient XenditGateway
 	mux.Post("/holds", ctrl.createHold)
 	mux.Post("/holds/:id/confirm", ctrl.confirmHold)
 	mux.Post("/holds/:id/release", ctrl.releaseHold)
-	mux.Post("/gateway/sub-account", ctrl.createGatewaySubAccount)
-	mux.Post("/gateway/payout", adminOnly, ctrl.sendGatewayPayout)
-
-	if xenditClient != nil {
-		mux.Post("/gateway/xendit/sub-account", ctrl.createXenditSubAccount)
-		mux.Get("/gateway/xendit/sub-account/:id", ctrl.getXenditAccount)
-		mux.Post("/gateway/xendit/account-holder", ctrl.createXenditAccountHolder)
-	}
 }
 
 type controller struct {
-	svc          *Service
-	xenditClient XenditGatewayClient // nil when Xendit not configured
+	svc *Service
 }
 
 // ─── Transactions ─────────────────────────────────────────────────────────────
@@ -209,7 +196,7 @@ func (ctrl *controller) getPaymentBalance(c fiber.Ctx) error {
 // getBalance godoc
 //
 //	@Summary		Get unified balance
-//	@Description	Returns the merchant's combined balance: shipping wallet (available/on-hold), payment settlement balance (settled/pending/paid-out), and live gateway balance (available/pending) fetched from the tenant's DOKU sub-account when configured.
+//	@Description	Returns the merchant's combined balance: shipping wallet (available/on-hold) and payment settlement balance (settled/pending/paid-out).
 //	@Tags			Account
 //	@Produce		json
 //	@Param			X-Tenant-ID	header		int64											true	"Tenant ID"
@@ -411,320 +398,6 @@ func (ctrl *controller) releaseHold(c fiber.Ctx) error {
 		return holdActionError(c, err)
 	}
 	return c.JSON(common.Response{Status: "OK", Data: hold})
-}
-
-// ─── Gateway ──────────────────────────────────────────────────────────────────
-
-// createGatewaySubAccount godoc
-//
-//	@Summary		Provision Doku gateway sub-account
-//	@Description	Creates a Doku payment gateway sub-account for the tenant and stores the account ID. Called by Tokokarya when onboarding a new merchant. Idempotent — returns 409 if an account already exists for this tenant.
-//	@Tags			Account
-//	@Accept			json
-//	@Produce		json
-//	@Param			X-Tenant-ID	header		int64											true	"Tenant ID"
-//	@Param			body		body		account.CreateGatewaySubAccountBody				true	"Sub-account details"
-//	@Success		201			{object}	common.Response{data=account.GatewayAccount}	"Sub-account created"
-//	@Failure		400			{object}	common.Response									"Invalid request"
-//	@Failure		409			{object}	common.Response									"Gateway account already exists"
-//	@Failure		503			{object}	common.Response									"Gateway not configured"
-//	@Failure		500			{object}	common.Response									"Internal server error"
-//	@Security		ApiKeyAuth
-//	@Router			/accounts/gateway/sub-account [post]
-func (ctrl *controller) createGatewaySubAccount(c fiber.Ctx) error {
-	tenantID := mustParseTenantID(c)
-	if tenantID == 0 {
-		return badRequest(c, "X-Tenant-ID header is required")
-	}
-
-	var body CreateGatewaySubAccountBody
-	if err := c.Bind().JSON(&body); err != nil {
-		return badRequest(c, err.Error())
-	}
-	if body.Email == "" {
-		return badRequest(c, "email is required")
-	}
-	if body.Name == "" {
-		return badRequest(c, "name is required")
-	}
-
-	acct, err := ctrl.svc.CreateGatewaySubAccount(c.Context(), CreateGatewaySubAccountRequest{
-		TenantID: tenantID,
-		Email:    body.Email,
-		Name:     body.Name,
-	})
-	if err != nil {
-		if errors.Is(err, ErrGatewayNotConfigured) {
-			return c.Status(http.StatusServiceUnavailable).JSON(common.Response{
-				Status: "Service Unavailable", Error: err.Error(),
-			})
-		}
-		if errors.Is(err, ErrGatewayAccountExists) {
-			return c.Status(http.StatusConflict).JSON(common.Response{
-				Status: "Conflict", Error: err.Error(),
-			})
-		}
-		return internalError(c, err)
-	}
-	return c.Status(http.StatusCreated).JSON(common.Response{Status: "Created", Data: acct})
-}
-
-// sendGatewayPayout godoc
-//
-//	@Summary		Send payout via Doku (admin only)
-//	@Description	Initiates a bank transfer payout from the tenant's Doku sub-account to the specified bank account. Restricted to admin API keys.
-//	@Tags			Account
-//	@Accept			json
-//	@Produce		json
-//	@Param			X-Tenant-ID	header		int64									true	"Tenant ID"
-//	@Param			body		body		account.SendGatewayPayoutBody			true	"Payout details"
-//	@Success		200			{object}	common.Response{data=map[string]string}	"Payout status"
-//	@Failure		400			{object}	common.Response							"Invalid request"
-//	@Failure		403			{object}	common.Response							"Forbidden — admin API key required"
-//	@Failure		404			{object}	common.Response							"No gateway account for this tenant"
-//	@Failure		503			{object}	common.Response							"Gateway not configured"
-//	@Failure		500			{object}	common.Response							"Internal server error"
-//	@Security		ApiKeyAuth
-//	@Security		AdminApiKeyAuth
-//	@Router			/accounts/gateway/payout [post]
-func (ctrl *controller) sendGatewayPayout(c fiber.Ctx) error {
-	tenantID := mustParseTenantID(c)
-	if tenantID == 0 {
-		return badRequest(c, "X-Tenant-ID header is required")
-	}
-
-	var body SendGatewayPayoutBody
-	if err := c.Bind().JSON(&body); err != nil {
-		return badRequest(c, err.Error())
-	}
-	if body.Amount <= 0 {
-		return badRequest(c, "amount must be greater than 0")
-	}
-	if body.InvoiceNumber == "" {
-		return badRequest(c, "invoice_number is required")
-	}
-	if body.BankCode == "" {
-		return badRequest(c, "bank_code is required")
-	}
-	if body.BankAccountNumber == "" {
-		return badRequest(c, "bank_account_number is required")
-	}
-	if body.BankAccountName == "" {
-		return badRequest(c, "bank_account_name is required")
-	}
-
-	status, err := ctrl.svc.SendGatewayPayout(c.Context(), SendGatewayPayoutRequest{
-		TenantID:          tenantID,
-		Amount:            body.Amount,
-		InvoiceNumber:     body.InvoiceNumber,
-		BankCode:          body.BankCode,
-		BankAccountNumber: body.BankAccountNumber,
-		BankAccountName:   body.BankAccountName,
-	})
-	if err != nil {
-		if errors.Is(err, ErrGatewayNotConfigured) {
-			return c.Status(http.StatusServiceUnavailable).JSON(common.Response{
-				Status: "Service Unavailable", Error: err.Error(),
-			})
-		}
-		if errors.Is(err, ErrGatewayAccountNotFound) {
-			return c.Status(http.StatusNotFound).JSON(common.Response{
-				Status: "Not Found", Error: err.Error(),
-			})
-		}
-		return internalError(c, err)
-	}
-	return c.JSON(common.Response{Status: "OK", Data: map[string]string{"status": status}})
-}
-
-// ─── Xendit gateway ───────────────────────────────────────────────────────────
-
-// createXenditSubAccount godoc
-//
-//	@Summary		Provision Xendit MANAGED sub-account
-//	@Description	Creates a Xendit MANAGED sub-account for the tenant and registers our payment webhook URL on it. The merchant receives an invitation email from Xendit to complete sign-up. Idempotent — returns 409 if an account already exists for this tenant.
-//	@Tags			Account
-//	@Accept			json
-//	@Produce		json
-//	@Param			X-Tenant-ID	header		int64											true	"Tenant ID"
-//	@Param			body		body		account.CreateGatewaySubAccountBody				true	"Sub-account details"
-//	@Success		201			{object}	common.Response{data=account.GatewayAccount}	"Sub-account created"
-//	@Failure		400			{object}	common.Response									"Invalid request"
-//	@Failure		409			{object}	common.Response									"Xendit account already exists for this tenant"
-//	@Failure		503			{object}	common.Response									"Xendit not configured"
-//	@Failure		500			{object}	common.Response									"Internal server error"
-//	@Security		ApiKeyAuth
-//	@Router			/accounts/gateway/xendit/sub-account [post]
-func (ctrl *controller) createXenditSubAccount(c fiber.Ctx) error {
-	tenantID := mustParseTenantID(c)
-	if tenantID == 0 {
-		return badRequest(c, "X-Tenant-ID header is required")
-	}
-
-	var body CreateGatewaySubAccountBody
-	if err := c.Bind().JSON(&body); err != nil {
-		return badRequest(c, err.Error())
-	}
-	if body.Email == "" {
-		return badRequest(c, "email is required")
-	}
-	if body.Name == "" {
-		return badRequest(c, "name is required")
-	}
-
-	acct, err := ctrl.svc.CreateXenditSubAccount(c.Context(), CreateXenditSubAccountRequest{
-		TenantID: tenantID,
-		Email:    body.Email,
-		Name:     body.Name,
-	})
-	if err != nil {
-		if errors.Is(err, ErrGatewayNotConfigured) {
-			return c.Status(http.StatusServiceUnavailable).JSON(common.Response{
-				Status: "Service Unavailable", Error: err.Error(),
-			})
-		}
-		if errors.Is(err, ErrGatewayAccountExists) {
-			return c.Status(http.StatusConflict).JSON(common.Response{
-				Status: "Conflict", Error: err.Error(),
-			})
-		}
-		return internalError(c, err)
-	}
-	return c.Status(http.StatusCreated).JSON(common.Response{Status: "Created", Data: acct})
-}
-
-// getXenditAccount godoc
-//
-//	@Summary		Get Xendit sub-account status
-//	@Description	Fetches the live account status and public profile from Xendit by account ID. Useful for tracking merchant onboarding progress (INVITED → REGISTERED → AWAITING_DOCS → PENDING_VERIFICATION → LIVE).
-//	@Tags			Account
-//	@Produce		json
-//	@Param			X-Tenant-ID	header		int64											true	"Tenant ID"
-//	@Param			id			path		string											true	"Xendit account ID"
-//	@Success		200			{object}	common.Response{data=account.XenditAccountInfo}	"Account info"
-//	@Failure		400			{object}	common.Response									"Missing tenant ID"
-//	@Failure		500			{object}	common.Response									"Internal server error"
-//	@Security		ApiKeyAuth
-//	@Router			/accounts/gateway/xendit/sub-account/{id} [get]
-func (ctrl *controller) getXenditAccount(c fiber.Ctx) error {
-	tenantID := mustParseTenantID(c)
-	if tenantID == 0 {
-		return badRequest(c, "X-Tenant-ID header is required")
-	}
-	accountID := c.Params("id")
-	if accountID == "" {
-		return badRequest(c, "account id is required")
-	}
-
-	info, err := ctrl.xenditClient.GetAccount(c.Context(), accountID)
-	if err != nil {
-		return internalError(c, err)
-	}
-	return c.JSON(common.Response{Status: "OK", Data: info})
-}
-
-// createXenditAccountHolder godoc
-//
-//	@Summary		Create and link Xendit account holder
-//	@Description	Submits KYC business details for the tenant's Xendit sub-account and links them. This starts the verification flow (REGISTERED → AWAITING_DOCS → PENDING_VERIFICATION → LIVE). Call this after creating the sub-account.
-//	@Tags			Account
-//	@Accept			json
-//	@Produce		json
-//	@Param			X-Tenant-ID	header		int64								true	"Tenant ID"
-//	@Param			body		body		account.CreateAccountHolderRequest	true	"KYC business details"
-//	@Success		200			{object}	common.Response						"Account holder created and linked"
-//	@Failure		400			{object}	common.Response						"Invalid request"
-//	@Failure		404			{object}	common.Response						"No Xendit sub-account found for this tenant"
-//	@Failure		503			{object}	common.Response						"Xendit not configured"
-//	@Failure		500			{object}	common.Response						"Internal server error"
-//	@Security		ApiKeyAuth
-//	@Router			/accounts/gateway/xendit/account-holder [post]
-func (ctrl *controller) createXenditAccountHolder(c fiber.Ctx) error {
-	tenantID := mustParseTenantID(c)
-	if tenantID == 0 {
-		return badRequest(c, "X-Tenant-ID header is required")
-	}
-
-	var req CreateAccountHolderRequest
-	if err := c.Bind().JSON(&req); err != nil {
-		return badRequest(c, err.Error())
-	}
-	if req.BusinessDetail.Type == "" {
-		return badRequest(c, "business_detail.type is required")
-	}
-	if !IsValidBusinessType(req.BusinessDetail.Type) {
-		return badRequest(c, "business_detail.type must be one of: CORPORATION, PARTNERSHIP, SOLE_PROPRIETORSHIP, INDIVIDUAL, FOREIGN, FOREIGN_SEC, FOREIGN_NONSEC")
-	}
-	if req.BusinessDetail.LegalName == "" {
-		return badRequest(c, "business_detail.legal_name is required")
-	}
-	if req.BusinessDetail.IndustryCategory == "" {
-		return badRequest(c, "business_detail.industry_category is required")
-	}
-	if !IsValidIndustryCategory(req.BusinessDetail.IndustryCategory) {
-		return badRequest(c, "business_detail.industry_category is not a valid Xendit industry category value")
-	}
-	if req.BusinessDetail.CountryOfOperation == "" {
-		req.BusinessDetail.CountryOfOperation = "ID"
-	}
-	if req.Email == "" {
-		return badRequest(c, "email is required")
-	}
-	if req.PhoneNumber == "" {
-		return badRequest(c, "phone_number is required")
-	}
-	if req.Address.StreetLine1 == "" {
-		return badRequest(c, "address.street_line1 is required")
-	}
-	if len(req.IndividualDetails) == 0 {
-		return badRequest(c, "individual_details is required — at least one PIC must be provided")
-	}
-	hasPIC := false
-	for _, ind := range req.IndividualDetails {
-		if ind.Type == "PIC" {
-			hasPIC = true
-		}
-		if ind.GivenNames == "" {
-			return badRequest(c, "individual_details[].given_names is required")
-		}
-		if ind.Surname == "" {
-			return badRequest(c, "individual_details[].surname is required")
-		}
-		if ind.PhoneNumber == "" {
-			return badRequest(c, "individual_details[].phone_number is required")
-		}
-		if ind.Email == "" {
-			return badRequest(c, "individual_details[].email is required")
-		}
-		if ind.Nationality == "" {
-			return badRequest(c, "individual_details[].nationality is required")
-		}
-		if ind.Role == "" {
-			return badRequest(c, "individual_details[].role is required")
-		}
-		if ind.Type != "PIC" && ind.Type != "Incorporator" {
-			return badRequest(c, "individual_details[].type must be PIC or Incorporator")
-		}
-	}
-	if !hasPIC {
-		return badRequest(c, "individual_details must contain at least one entry with type PIC")
-	}
-
-	if err := ctrl.svc.CreateAndLinkAccountHolder(c.Context(), tenantID, req); err != nil {
-		switch {
-		case errors.Is(err, ErrGatewayNotConfigured):
-			return c.Status(http.StatusServiceUnavailable).JSON(common.Response{
-				Status: "Service Unavailable", Error: err.Error(),
-			})
-		case errors.Is(err, ErrGatewayAccountNotFound):
-			return c.Status(http.StatusNotFound).JSON(common.Response{
-				Status: "Not Found", Error: "no Xendit sub-account found for this tenant — create one first",
-			})
-		default:
-			return internalError(c, err)
-		}
-	}
-	return c.JSON(common.Response{Status: "OK", Data: map[string]string{"message": "account holder created and linked — verification flow started"}})
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────

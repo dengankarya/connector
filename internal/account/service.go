@@ -16,16 +16,14 @@ import (
 
 // Service handles all account-level operations: activity feed, shipping balance, holds, topups.
 type Service struct {
-	repo         *Repository
-	txRunner     *postgres.TxRunner
-	dokuClient   GatewayClient       // nil when Doku is not configured
-	xenditClient XenditGatewayClient // nil when Xendit is not configured
-	logger       *logrus.Logger
+	repo     *Repository
+	txRunner *postgres.TxRunner
+	logger   *logrus.Logger
 }
 
-// NewService creates a Service. Pass nil for clients that are not configured.
-func NewService(repo *Repository, txRunner *postgres.TxRunner, dokuClient GatewayClient, xenditClient XenditGatewayClient, logger *logrus.Logger) *Service {
-	return &Service{repo: repo, txRunner: txRunner, dokuClient: dokuClient, xenditClient: xenditClient, logger: logger}
+// NewService creates a Service.
+func NewService(repo *Repository, txRunner *postgres.TxRunner, logger *logrus.Logger) *Service {
+	return &Service{repo: repo, txRunner: txRunner, logger: logger}
 }
 
 // ─── Activity feed ────────────────────────────────────────────────────────────
@@ -127,9 +125,7 @@ func (s *Service) GetGatewayAccountIDForTenant(ctx context.Context, tenantID int
 	return acct.GatewayAccountID, nil
 }
 
-// GetUnifiedBalance returns the combined shipping wallet, payment settlement balance,
-// and (when a gateway sub-account exists) the live gateway balance from Doku.
-// The gateway balance fetch is best-effort — failures are logged and omitted, not surfaced.
+// GetUnifiedBalance returns the combined shipping wallet and payment settlement balance.
 func (s *Service) GetUnifiedBalance(ctx context.Context, tenantID int64) (*UnifiedBalance, error) {
 	shipping, err := s.repo.GetBalance(ctx, tenantID)
 	if err != nil {
@@ -139,190 +135,7 @@ func (s *Service) GetUnifiedBalance(ctx context.Context, tenantID int64) (*Unifi
 	if err != nil {
 		return nil, fmt.Errorf("unified balance: payment: %w", err)
 	}
-
-	bal := &UnifiedBalance{Shipping: shipping, Payment: payment}
-
-	if s.dokuClient != nil {
-		acct, err := s.repo.GetGatewayAccountByTenantID(ctx, tenantID, "doku")
-		if err == nil {
-			pending, available, err := s.dokuClient.GetBalance(ctx, acct.GatewayAccountID)
-			if err != nil {
-				s.logger.WithFields(logrus.Fields{
-					"component":          "account",
-					"tenant_id":          tenantID,
-					"gateway_account_id": acct.GatewayAccountID,
-					"error":              err,
-				}).Warn("failed to fetch gateway balance; omitting from response")
-			} else {
-				bal.Gateway = &GatewayBalance{
-					GatewayAccountID: acct.GatewayAccountID,
-					Pending:          pending,
-					Available:        available,
-					Currency:         "IDR",
-				}
-			}
-		}
-	}
-
-	return bal, nil
-}
-
-// ─── Gateway sub-account ──────────────────────────────────────────────────────
-
-// CreateGatewaySubAccountRequest is the input for provisioning a Doku sub-account.
-type CreateGatewaySubAccountRequest struct {
-	TenantID int64
-	Email    string
-	Name     string
-}
-
-// CreateGatewaySubAccount provisions a Doku sub-account for the tenant and stores it.
-// Returns ErrGatewayNotConfigured when Doku is not wired up.
-// Returns ErrGatewayAccountExists when the tenant already has an account.
-func (s *Service) CreateGatewaySubAccount(ctx context.Context, req CreateGatewaySubAccountRequest) (*GatewayAccount, error) {
-	if s.dokuClient == nil {
-		return nil, ErrGatewayNotConfigured
-	}
-
-	gatewayAccountID, status, err := s.dokuClient.CreateSubAccount(ctx, req.Email, req.Name)
-	if err != nil {
-		return nil, fmt.Errorf("gateway: create sub-account: %w", err)
-	}
-
-	acct := &GatewayAccount{
-		TenantID:         req.TenantID,
-		Gateway:          "doku",
-		GatewayAccountID: gatewayAccountID,
-		Email:            req.Email,
-		Name:             req.Name,
-		Status:           status,
-	}
-	if err := s.repo.CreateGatewayAccount(ctx, acct); err != nil {
-		return nil, err
-	}
-
-	s.logger.WithFields(logrus.Fields{
-		"component":          "account",
-		"tenant_id":          req.TenantID,
-		"gateway_account_id": gatewayAccountID,
-	}).Info("gateway sub-account created")
-	return acct, nil
-}
-
-// CreateXenditSubAccountRequest is the input for provisioning a Xendit MANAGED sub-account.
-type CreateXenditSubAccountRequest struct {
-	TenantID int64
-	Email    string
-	Name     string
-}
-
-// CreateXenditSubAccount provisions a Xendit MANAGED sub-account for the tenant and stores it.
-// Also registers the /webhook/xendit callback URL on the created sub-account.
-// Returns ErrGatewayNotConfigured when Xendit is not configured.
-// Returns ErrGatewayAccountExists when the tenant already has a Xendit account.
-func (s *Service) CreateXenditSubAccount(ctx context.Context, req CreateXenditSubAccountRequest) (*GatewayAccount, error) {
-	if s.xenditClient == nil {
-		return nil, ErrGatewayNotConfigured
-	}
-
-	// Idempotency guard — check DB before calling Xendit.
-	if _, err := s.repo.GetGatewayAccountByTenantID(ctx, req.TenantID, "xendit"); err == nil {
-		return nil, ErrGatewayAccountExists
-	}
-
-	gatewayAccountID, status, err := s.xenditClient.CreateSubAccount(ctx, req.Email, req.Name)
-	if err != nil {
-		return nil, fmt.Errorf("xendit: create sub-account: %w", err)
-	}
-
-	acct := &GatewayAccount{
-		TenantID:         req.TenantID,
-		Gateway:          "xendit",
-		GatewayAccountID: gatewayAccountID,
-		Email:            req.Email,
-		Name:             req.Name,
-		Status:           status,
-	}
-	if err := s.repo.CreateGatewayAccount(ctx, acct); err != nil {
-		return nil, err
-	}
-
-	s.logger.WithFields(logrus.Fields{
-		"component":          "account",
-		"tenant_id":          req.TenantID,
-		"gateway_account_id": gatewayAccountID,
-	}).Info("xendit sub-account created")
-	return acct, nil
-}
-
-// CreateAndLinkAccountHolder creates a Xendit account holder for the tenant's sub-account
-// and immediately patches the sub-account to link them. This starts the verification flow:
-// REGISTERED → AWAITING_DOCS → PENDING_VERIFICATION → LIVE.
-func (s *Service) CreateAndLinkAccountHolder(ctx context.Context, tenantID int64, req CreateAccountHolderRequest) error {
-	if s.xenditClient == nil {
-		return ErrGatewayNotConfigured
-	}
-
-	acct, err := s.repo.GetGatewayAccountByTenantID(ctx, tenantID, "xendit")
-	if err != nil {
-		return ErrGatewayAccountNotFound
-	}
-
-	accountHolderID, err := s.xenditClient.CreateAccountHolder(ctx, acct.GatewayAccountID, req)
-	if err != nil {
-		return fmt.Errorf("create account holder: %w", err)
-	}
-
-	if err := s.xenditClient.LinkAccountHolder(ctx, acct.GatewayAccountID, accountHolderID); err != nil {
-		return fmt.Errorf("link account holder: %w", err)
-	}
-
-	s.logger.WithFields(logrus.Fields{
-		"component":         "account",
-		"tenant_id":         tenantID,
-		"sub_account_id":    acct.GatewayAccountID,
-		"account_holder_id": accountHolderID,
-	}).Info("xendit account holder created and linked")
-	return nil
-}
-
-// SendGatewayPayoutRequest is the input for disbursing funds via the gateway.
-type SendGatewayPayoutRequest struct {
-	TenantID          int64
-	Amount            int64
-	InvoiceNumber     string
-	BankCode          string
-	BankAccountNumber string
-	BankAccountName   string
-}
-
-// SendGatewayPayout looks up the tenant's Doku sub-account and initiates a payout.
-// Returns ErrGatewayNotConfigured when Doku is not wired up.
-// Returns ErrGatewayAccountNotFound when the tenant has no sub-account yet.
-func (s *Service) SendGatewayPayout(ctx context.Context, req SendGatewayPayoutRequest) (status string, err error) {
-	if s.dokuClient == nil {
-		return "", ErrGatewayNotConfigured
-	}
-
-	acct, err := s.repo.GetGatewayAccountByTenantID(ctx, req.TenantID, "doku")
-	if err != nil {
-		return "", err
-	}
-
-	status, err = s.dokuClient.SendPayout(ctx, acct.GatewayAccountID,
-		req.Amount, req.InvoiceNumber, req.BankCode, req.BankAccountNumber, req.BankAccountName)
-	if err != nil {
-		return "", fmt.Errorf("gateway: send payout: %w", err)
-	}
-
-	s.logger.WithFields(logrus.Fields{
-		"component":          "account",
-		"tenant_id":          req.TenantID,
-		"gateway_account_id": acct.GatewayAccountID,
-		"amount":             req.Amount,
-		"invoice_number":     req.InvoiceNumber,
-	}).Info("gateway payout sent")
-	return status, nil
+	return &UnifiedBalance{Shipping: shipping, Payment: payment}, nil
 }
 
 // TopupRequest is the input for a manual balance top-up.

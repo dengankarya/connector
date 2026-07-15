@@ -77,7 +77,7 @@ definitions:
         description: gross amount (merchant_amount + platform_fee + shipping_fee)
         type: integer
       checkout_url:
-        description: Xendit invoice payment page URL returned to the caller
+        description: payment page URL returned to the caller
         type: string
       created_at:
         type: string
@@ -122,13 +122,13 @@ definitions:
       platform_fee:
         type: integer
       provider:
-        description: '"xendit", "midtrans", etc.'
+        description: '"durianpay", etc.'
         type: string
       provider_invoice_id:
-        description: Xendit payment_session_id (ps-xxx)
+        description: provider payment session ID
         type: string
       provider_payment_id:
-        description: Xendit payment_id (py-xxx); populated on payment.capture
+        description: provider payment ID; populated on payment capture
         type: string
       settled_at:
         type: string
@@ -149,8 +149,7 @@ definitions:
         description: optimistic lock version; increment on every write
         type: integer
       xendit_fee:
-        description: Fee breakdown — populated by the settlement sync job after Xendit
-          confirms settlement.
+        description: Fee breakdown — populated after payment gateway confirms settlement.
         type: integer
       xendit_withholding_tax:
         type: integer
@@ -609,105 +608,6 @@ definitions:
       tier:
         type: string
     type: object
-  internal_account.AccountHolderAddress:
-    properties:
-      city:
-        example: Jakarta
-        type: string
-      country:
-        example: ID
-        type: string
-      postal_code:
-        example: "12190"
-        type: string
-      province_state:
-        example: DKI Jakarta
-        type: string
-      street_line1:
-        example: Jl. Sudirman No. 1
-        type: string
-    type: object
-  internal_account.AccountHolderBusinessDetail:
-    properties:
-      country_of_operation:
-        example: ID
-        type: string
-      date_of_registration:
-        description: YYYY-MM-DD
-        example: "2020-01-15"
-        type: string
-      description:
-        example: Online fashion store
-        type: string
-      industry_category:
-        example: RETAIL
-        type: string
-      legal_name:
-        example: PT Toko ABC
-        type: string
-      trading_name:
-        example: Toko ABC
-        type: string
-      type:
-        description: CORPORATION | PARTNERSHIP | SOLE_PROPRIETORSHIP | INDIVIDUAL
-        example: CORPORATION
-        type: string
-    type: object
-  internal_account.AccountHolderIndividualDetail:
-    properties:
-      date_of_birth:
-        description: YYYY-MM-DD
-        example: "1990-01-15"
-        type: string
-      email:
-        example: budi@example.com
-        type: string
-      gender:
-        description: MALE | FEMALE | OTHER
-        example: MALE
-        type: string
-      given_names:
-        example: Budi
-        type: string
-      nationality:
-        description: ISO 3166-2
-        example: ID
-        type: string
-      phone_number:
-        example: "+6281234567890"
-        type: string
-      place_of_birth:
-        example: Jakarta
-        type: string
-      role:
-        description: e.g. Owner, Director
-        example: Owner
-        type: string
-      surname:
-        example: Santoso
-        type: string
-      type:
-        description: PIC | Incorporator
-        example: PIC
-        type: string
-    type: object
-  internal_account.AccountHolderKYCDocument:
-    properties:
-      country:
-        example: ID
-        type: string
-      expires_at:
-        description: YYYY-MM-DD
-        example: "2030-12-31"
-        type: string
-      file_id:
-        example: <file_id from Xendit Upload API>
-        type: string
-      type:
-        description: e.g. ID_NIB, ID_COMPANY_NPWP, ID_AKTA, ID_NATIONAL_ID_KTP
-        example: ID_NIB
-        type: string
-    type: object
   internal_account.ActivityDetail:
     properties:
       amount:
@@ -785,39 +685,6 @@ definitions:
     - ActivityShipmentConfirmed
     - ActivityShipmentReleased
     - ActivityShipmentPriceAdjustment
-  internal_account.CreateAccountHolderRequest:
-    properties:
-      address:
-        $ref: '#/definitions/internal_account.AccountHolderAddress'
-      business_detail:
-        $ref: '#/definitions/internal_account.AccountHolderBusinessDetail'
-      email:
-        example: merchant@example.com
-        type: string
-      individual_details:
-        items:
-          $ref: '#/definitions/internal_account.AccountHolderIndividualDetail'
-        type: array
-      kyc_documents:
-        items:
-          $ref: '#/definitions/internal_account.AccountHolderKYCDocument'
-        type: array
-      phone_number:
-        example: "+6281234567890"
-        type: string
-      website_url:
-        example: https://tokoabc.com
-        type: string
-    type: object
-  internal_account.CreateGatewaySubAccountBody:
-    properties:
-      email:
-        example: toko-abc@example.com
-        type: string
-      name:
-        example: Toko ABC
-        type: string
-    type: object
   internal_account.CreateHoldBody:
     properties:
       amount:
@@ -828,27 +695,6 @@ definitions:
         type: string
       order_number:
         example: ORD-001
-        type: string
-    type: object
-  internal_account.GatewayAccount:
-    properties:
-      created_at:
-        type: string
-      email:
-        type: string
-      gateway:
-        type: string
-      gateway_account_id:
-        type: string
-      id:
-        type: string
-      name:
-        type: string
-      status:
-        type: string
-      tenant_id:
-        type: integer
-      updated_at:
         type: string
     type: object
   internal_account.GatewayBalance:
@@ -911,24 +757,6 @@ definitions:
         type: integer
       tenant_id:
         type: integer
-    type: object
-  internal_account.SendGatewayPayoutBody:
-    properties:
-      amount:
-        example: 100000
-        type: integer
-      bank_account_name:
-        example: Budi Santoso
-        type: string
-      bank_account_number:
-        example: "0123456789"
-        type: string
-      bank_code:
-        example: BNINIDJA
-        type: string
-      invoice_number:
-        example: INV/2026/001
-        type: string
     type: object
   internal_account.ShippingBalance:
     properties:
@@ -1013,24 +841,6 @@ definitions:
         description: Shipping wallet — available funds and funds on hold for pending
           shipments.
     type: object
-  internal_account.XenditAccountInfo:
-    properties:
-      email:
-        type: string
-      id:
-        type: string
-      public_profile:
-        properties:
-          country:
-            type: string
-          name:
-            type: string
-        type: object
-      status:
-        type: string
-      type:
-        type: string
-    type: object
   internal_payment.ConfirmManualPaymentBody:
     properties:
       payment_channel:
@@ -1100,7 +910,7 @@ definitions:
       platform_fee:
         type: integer
       result_url:
-        description: optional; DOKU result page URL
+        description: optional; post-payment redirect URL
         type: string
       shipping_fee:
         type: integer
@@ -1137,9 +947,8 @@ info:
 paths:
   /accounts/balance:
     get:
-      description: 'Returns the merchant''s combined balance: shipping wallet (available/on-hold),
-        payment settlement balance (settled/pending/paid-out), and live gateway balance
-        (available/pending) fetched from the tenant''s DOKU sub-account when configured.'
+      description: 'Returns the merchant''s combined balance: shipping wallet (available/on-hold)
+        and payment settlement balance (settled/pending/paid-out).'
       parameters:
       - description: Tenant ID
         format: int64
@@ -1257,262 +1066,6 @@ paths:
       - ApiKeyAuth: []
       - AdminApiKeyAuth: []
       summary: Top up shipping balance (admin only)
-      tags:
-      - Account
-  /accounts/gateway/payout:
-    post:
-      consumes:
-      - application/json
-      description: Initiates a bank transfer payout from the tenant's Doku sub-account
-        to the specified bank account. Restricted to admin API keys.
-      parameters:
-      - description: Tenant ID
-        format: int64
-        in: header
-        name: X-Tenant-ID
-        required: true
-        type: integer
-      - description: Payout details
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/internal_account.SendGatewayPayoutBody'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Payout status
-          schema:
-            allOf:
-            - $ref: '#/definitions/common.Response'
-            - properties:
-                data:
-                  additionalProperties:
-                    type: string
-                  type: object
-              type: object
-        "400":
-          description: Invalid request
-          schema:
-            $ref: '#/definitions/common.Response'
-        "403":
-          description: Forbidden — admin API key required
-          schema:
-            $ref: '#/definitions/common.Response'
-        "404":
-          description: No gateway account for this tenant
-          schema:
-            $ref: '#/definitions/common.Response'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/common.Response'
-        "503":
-          description: Gateway not configured
-          schema:
-            $ref: '#/definitions/common.Response'
-      security:
-      - ApiKeyAuth: []
-      - AdminApiKeyAuth: []
-      summary: Send payout via Doku (admin only)
-      tags:
-      - Account
-  /accounts/gateway/sub-account:
-    post:
-      consumes:
-      - application/json
-      description: Creates a Doku payment gateway sub-account for the tenant and stores
-        the account ID. Called by Tokokarya when onboarding a new merchant. Idempotent
-        — returns 409 if an account already exists for this tenant.
-      parameters:
-      - description: Tenant ID
-        format: int64
-        in: header
-        name: X-Tenant-ID
-        required: true
-        type: integer
-      - description: Sub-account details
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/internal_account.CreateGatewaySubAccountBody'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Sub-account created
-          schema:
-            allOf:
-            - $ref: '#/definitions/common.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/internal_account.GatewayAccount'
-              type: object
-        "400":
-          description: Invalid request
-          schema:
-            $ref: '#/definitions/common.Response'
-        "409":
-          description: Gateway account already exists
-          schema:
-            $ref: '#/definitions/common.Response'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/common.Response'
-        "503":
-          description: Gateway not configured
-          schema:
-            $ref: '#/definitions/common.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Provision Doku gateway sub-account
-      tags:
-      - Account
-  /accounts/gateway/xendit/account-holder:
-    post:
-      consumes:
-      - application/json
-      description: Submits KYC business details for the tenant's Xendit sub-account
-        and links them. This starts the verification flow (REGISTERED → AWAITING_DOCS
-        → PENDING_VERIFICATION → LIVE). Call this after creating the sub-account.
-      parameters:
-      - description: Tenant ID
-        format: int64
-        in: header
-        name: X-Tenant-ID
-        required: true
-        type: integer
-      - description: KYC business details
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/internal_account.CreateAccountHolderRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Account holder created and linked
-          schema:
-            $ref: '#/definitions/common.Response'
-        "400":
-          description: Invalid request
-          schema:
-            $ref: '#/definitions/common.Response'
-        "404":
-          description: No Xendit sub-account found for this tenant
-          schema:
-            $ref: '#/definitions/common.Response'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/common.Response'
-        "503":
-          description: Xendit not configured
-          schema:
-            $ref: '#/definitions/common.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Create and link Xendit account holder
-      tags:
-      - Account
-  /accounts/gateway/xendit/sub-account:
-    post:
-      consumes:
-      - application/json
-      description: Creates a Xendit MANAGED sub-account for the tenant and registers
-        our payment webhook URL on it. The merchant receives an invitation email from
-        Xendit to complete sign-up. Idempotent — returns 409 if an account already
-        exists for this tenant.
-      parameters:
-      - description: Tenant ID
-        format: int64
-        in: header
-        name: X-Tenant-ID
-        required: true
-        type: integer
-      - description: Sub-account details
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/internal_account.CreateGatewaySubAccountBody'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Sub-account created
-          schema:
-            allOf:
-            - $ref: '#/definitions/common.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/internal_account.GatewayAccount'
-              type: object
-        "400":
-          description: Invalid request
-          schema:
-            $ref: '#/definitions/common.Response'
-        "409":
-          description: Xendit account already exists for this tenant
-          schema:
-            $ref: '#/definitions/common.Response'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/common.Response'
-        "503":
-          description: Xendit not configured
-          schema:
-            $ref: '#/definitions/common.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Provision Xendit MANAGED sub-account
-      tags:
-      - Account
-  /accounts/gateway/xendit/sub-account/{id}:
-    get:
-      description: Fetches the live account status and public profile from Xendit
-        by account ID. Useful for tracking merchant onboarding progress (INVITED →
-        REGISTERED → AWAITING_DOCS → PENDING_VERIFICATION → LIVE).
-      parameters:
-      - description: Tenant ID
-        format: int64
-        in: header
-        name: X-Tenant-ID
-        required: true
-        type: integer
-      - description: Xendit account ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Account info
-          schema:
-            allOf:
-            - $ref: '#/definitions/common.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/internal_account.XenditAccountInfo'
-              type: object
-        "400":
-          description: Missing tenant ID
-          schema:
-            $ref: '#/definitions/common.Response'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/common.Response'
-      security:
-      - ApiKeyAuth: []
-      summary: Get Xendit sub-account status
       tags:
       - Account
   /accounts/holds:
@@ -1858,8 +1411,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates a payment session via the configured provider (DOKU Checkout)
-        and returns the checkout URL.
+      description: Creates a payment session via the configured provider and returns
+        the checkout URL or VA/QRIS details.
       parameters:
       - description: Tenant ID
         format: int64

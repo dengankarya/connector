@@ -12,8 +12,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// AccountEventHandler handles non-payment webhook events (e.g. account status, KYC).
-// Implemented by *account.XenditAccountWebhookHandler. Pass nil to skip account routing.
+// AccountEventHandler handles non-payment webhook events. Pass nil to skip account routing.
 type AccountEventHandler interface {
 	Handle(ctx context.Context, eventType string, rawPayload []byte)
 	IsAccountEvent(eventType string) bool
@@ -48,18 +47,13 @@ func RegisterIngestHandler(
 
 		rawBody := c.Body()
 
-		// Collect all headers relevant to audit logging and signature validation.
-		// "Request-Target" carries the request path so providers can verify their
-		// HMAC signatures without needing the path baked into their configuration.
+		// Collect headers relevant to audit logging and signature validation.
 		headers := map[string]string{
-			"Content-Type":   c.Get("Content-Type"),
-			"Request-Target": c.Path(),
-			// Xendit headers
-			"X-Callback-Token": c.Get("X-Callback-Token"),
-			"X-Webhook-Token":  c.Get("X-Webhook-Token"),
-			"X-Request-ID":     c.Get("X-Request-ID"),
-			// DOKU Non-SNAP headers
-			"Client-Id":         c.Get("Client-Id"),
+			"Content-Type":      c.Get("Content-Type"),
+			"Request-Target":    c.Path(),
+			"X-Callback-Token":  c.Get("X-Callback-Token"),
+			"X-Webhook-Token":   c.Get("X-Webhook-Token"),
+			"X-Request-ID":      c.Get("X-Request-ID"),
 			"Request-Id":        c.Get("Request-Id"),
 			"Request-Timestamp": c.Get("Request-Timestamp"),
 			"Signature":         c.Get("Signature"),

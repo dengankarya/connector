@@ -32,7 +32,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Returns the merchant's combined balance: shipping wallet (available/on-hold), payment settlement balance (settled/pending/paid-out), and live gateway balance (available/pending) fetched from the tenant's DOKU sub-account when configured.",
+                "description": "Returns the merchant's combined balance: shipping wallet (available/on-hold) and payment settlement balance (settled/pending/paid-out).",
                 "produces": [
                     "application/json"
                 ],
@@ -210,404 +210,6 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Forbidden — admin API key required",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    }
-                }
-            }
-        },
-        "/accounts/gateway/payout": {
-            "post": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    },
-                    {
-                        "AdminApiKeyAuth": []
-                    }
-                ],
-                "description": "Initiates a bank transfer payout from the tenant's Doku sub-account to the specified bank account. Restricted to admin API keys.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Account"
-                ],
-                "summary": "Send payout via Doku (admin only)",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "format": "int64",
-                        "description": "Tenant ID",
-                        "name": "X-Tenant-ID",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "description": "Payout details",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/internal_account.SendGatewayPayoutBody"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Payout status",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/common.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "type": "object",
-                                            "additionalProperties": {
-                                                "type": "string"
-                                            }
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden — admin API key required",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "404": {
-                        "description": "No gateway account for this tenant",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "503": {
-                        "description": "Gateway not configured",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    }
-                }
-            }
-        },
-        "/accounts/gateway/sub-account": {
-            "post": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "description": "Creates a Doku payment gateway sub-account for the tenant and stores the account ID. Called by Tokokarya when onboarding a new merchant. Idempotent — returns 409 if an account already exists for this tenant.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Account"
-                ],
-                "summary": "Provision Doku gateway sub-account",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "format": "int64",
-                        "description": "Tenant ID",
-                        "name": "X-Tenant-ID",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "description": "Sub-account details",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/internal_account.CreateGatewaySubAccountBody"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Sub-account created",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/common.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/internal_account.GatewayAccount"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "409": {
-                        "description": "Gateway account already exists",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "503": {
-                        "description": "Gateway not configured",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    }
-                }
-            }
-        },
-        "/accounts/gateway/xendit/account-holder": {
-            "post": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "description": "Submits KYC business details for the tenant's Xendit sub-account and links them. This starts the verification flow (REGISTERED → AWAITING_DOCS → PENDING_VERIFICATION → LIVE). Call this after creating the sub-account.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Account"
-                ],
-                "summary": "Create and link Xendit account holder",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "format": "int64",
-                        "description": "Tenant ID",
-                        "name": "X-Tenant-ID",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "description": "KYC business details",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/internal_account.CreateAccountHolderRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Account holder created and linked",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "404": {
-                        "description": "No Xendit sub-account found for this tenant",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "503": {
-                        "description": "Xendit not configured",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    }
-                }
-            }
-        },
-        "/accounts/gateway/xendit/sub-account": {
-            "post": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "description": "Creates a Xendit MANAGED sub-account for the tenant and registers our payment webhook URL on it. The merchant receives an invitation email from Xendit to complete sign-up. Idempotent — returns 409 if an account already exists for this tenant.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Account"
-                ],
-                "summary": "Provision Xendit MANAGED sub-account",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "format": "int64",
-                        "description": "Tenant ID",
-                        "name": "X-Tenant-ID",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "description": "Sub-account details",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/internal_account.CreateGatewaySubAccountBody"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Sub-account created",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/common.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/internal_account.GatewayAccount"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "409": {
-                        "description": "Xendit account already exists for this tenant",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    },
-                    "503": {
-                        "description": "Xendit not configured",
-                        "schema": {
-                            "$ref": "#/definitions/common.Response"
-                        }
-                    }
-                }
-            }
-        },
-        "/accounts/gateway/xendit/sub-account/{id}": {
-            "get": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
-                "description": "Fetches the live account status and public profile from Xendit by account ID. Useful for tracking merchant onboarding progress (INVITED → REGISTERED → AWAITING_DOCS → PENDING_VERIFICATION → LIVE).",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Account"
-                ],
-                "summary": "Get Xendit sub-account status",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "format": "int64",
-                        "description": "Tenant ID",
-                        "name": "X-Tenant-ID",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Xendit account ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Account info",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/common.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/internal_account.XenditAccountInfo"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Missing tenant ID",
                         "schema": {
                             "$ref": "#/definitions/common.Response"
                         }
@@ -1158,7 +760,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Creates a payment session via the configured provider (DOKU Checkout) and returns the checkout URL.",
+                "description": "Creates a payment session via the configured provider and returns the checkout URL or VA/QRIS details.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2380,7 +1982,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "checkout_url": {
-                    "description": "Xendit invoice payment page URL returned to the caller",
+                    "description": "payment page URL returned to the caller",
                     "type": "string"
                 },
                 "created_at": {
@@ -2438,15 +2040,15 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "provider": {
-                    "description": "\"xendit\", \"midtrans\", etc.",
+                    "description": "\"durianpay\", etc.",
                     "type": "string"
                 },
                 "provider_invoice_id": {
-                    "description": "Xendit payment_session_id (ps-xxx)",
+                    "description": "provider payment session ID",
                     "type": "string"
                 },
                 "provider_payment_id": {
-                    "description": "Xendit payment_id (py-xxx); populated on payment.capture",
+                    "description": "provider payment ID; populated on payment capture",
                     "type": "string"
                 },
                 "settled_at": {
@@ -2476,7 +2078,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "xendit_fee": {
-                    "description": "Fee breakdown — populated by the settlement sync job after Xendit confirms settlement.",
+                    "description": "Fee breakdown — populated after payment gateway confirms settlement.",
                     "type": "integer"
                 },
                 "xendit_withholding_tax": {
@@ -3065,139 +2667,6 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_account.AccountHolderAddress": {
-            "type": "object",
-            "properties": {
-                "city": {
-                    "type": "string",
-                    "example": "Jakarta"
-                },
-                "country": {
-                    "type": "string",
-                    "example": "ID"
-                },
-                "postal_code": {
-                    "type": "string",
-                    "example": "12190"
-                },
-                "province_state": {
-                    "type": "string",
-                    "example": "DKI Jakarta"
-                },
-                "street_line1": {
-                    "type": "string",
-                    "example": "Jl. Sudirman No. 1"
-                }
-            }
-        },
-        "internal_account.AccountHolderBusinessDetail": {
-            "type": "object",
-            "properties": {
-                "country_of_operation": {
-                    "type": "string",
-                    "example": "ID"
-                },
-                "date_of_registration": {
-                    "description": "YYYY-MM-DD",
-                    "type": "string",
-                    "example": "2020-01-15"
-                },
-                "description": {
-                    "type": "string",
-                    "example": "Online fashion store"
-                },
-                "industry_category": {
-                    "type": "string",
-                    "example": "RETAIL"
-                },
-                "legal_name": {
-                    "type": "string",
-                    "example": "PT Toko ABC"
-                },
-                "trading_name": {
-                    "type": "string",
-                    "example": "Toko ABC"
-                },
-                "type": {
-                    "description": "CORPORATION | PARTNERSHIP | SOLE_PROPRIETORSHIP | INDIVIDUAL",
-                    "type": "string",
-                    "example": "CORPORATION"
-                }
-            }
-        },
-        "internal_account.AccountHolderIndividualDetail": {
-            "type": "object",
-            "properties": {
-                "date_of_birth": {
-                    "description": "YYYY-MM-DD",
-                    "type": "string",
-                    "example": "1990-01-15"
-                },
-                "email": {
-                    "type": "string",
-                    "example": "budi@example.com"
-                },
-                "gender": {
-                    "description": "MALE | FEMALE | OTHER",
-                    "type": "string",
-                    "example": "MALE"
-                },
-                "given_names": {
-                    "type": "string",
-                    "example": "Budi"
-                },
-                "nationality": {
-                    "description": "ISO 3166-2",
-                    "type": "string",
-                    "example": "ID"
-                },
-                "phone_number": {
-                    "type": "string",
-                    "example": "+6281234567890"
-                },
-                "place_of_birth": {
-                    "type": "string",
-                    "example": "Jakarta"
-                },
-                "role": {
-                    "description": "e.g. Owner, Director",
-                    "type": "string",
-                    "example": "Owner"
-                },
-                "surname": {
-                    "type": "string",
-                    "example": "Santoso"
-                },
-                "type": {
-                    "description": "PIC | Incorporator",
-                    "type": "string",
-                    "example": "PIC"
-                }
-            }
-        },
-        "internal_account.AccountHolderKYCDocument": {
-            "type": "object",
-            "properties": {
-                "country": {
-                    "type": "string",
-                    "example": "ID"
-                },
-                "expires_at": {
-                    "description": "YYYY-MM-DD",
-                    "type": "string",
-                    "example": "2030-12-31"
-                },
-                "file_id": {
-                    "type": "string",
-                    "example": "\u003cfile_id from Xendit Upload API\u003e"
-                },
-                "type": {
-                    "description": "e.g. ID_NIB, ID_COMPANY_NPWP, ID_AKTA, ID_NATIONAL_ID_KTP",
-                    "type": "string",
-                    "example": "ID_NIB"
-                }
-            }
-        },
         "internal_account.ActivityDetail": {
             "type": "object",
             "properties": {
@@ -3303,54 +2772,6 @@ const docTemplate = `{
                 "ActivityShipmentPriceAdjustment"
             ]
         },
-        "internal_account.CreateAccountHolderRequest": {
-            "type": "object",
-            "properties": {
-                "address": {
-                    "$ref": "#/definitions/internal_account.AccountHolderAddress"
-                },
-                "business_detail": {
-                    "$ref": "#/definitions/internal_account.AccountHolderBusinessDetail"
-                },
-                "email": {
-                    "type": "string",
-                    "example": "merchant@example.com"
-                },
-                "individual_details": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/internal_account.AccountHolderIndividualDetail"
-                    }
-                },
-                "kyc_documents": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/internal_account.AccountHolderKYCDocument"
-                    }
-                },
-                "phone_number": {
-                    "type": "string",
-                    "example": "+6281234567890"
-                },
-                "website_url": {
-                    "type": "string",
-                    "example": "https://tokoabc.com"
-                }
-            }
-        },
-        "internal_account.CreateGatewaySubAccountBody": {
-            "type": "object",
-            "properties": {
-                "email": {
-                    "type": "string",
-                    "example": "toko-abc@example.com"
-                },
-                "name": {
-                    "type": "string",
-                    "example": "Toko ABC"
-                }
-            }
-        },
         "internal_account.CreateHoldBody": {
             "type": "object",
             "properties": {
@@ -3365,38 +2786,6 @@ const docTemplate = `{
                 "order_number": {
                     "type": "string",
                     "example": "ORD-001"
-                }
-            }
-        },
-        "internal_account.GatewayAccount": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "email": {
-                    "type": "string"
-                },
-                "gateway": {
-                    "type": "string"
-                },
-                "gateway_account_id": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "status": {
-                    "type": "string"
-                },
-                "tenant_id": {
-                    "type": "integer"
-                },
-                "updated_at": {
-                    "type": "string"
                 }
             }
         },
@@ -3477,31 +2866,6 @@ const docTemplate = `{
                 },
                 "tenant_id": {
                     "type": "integer"
-                }
-            }
-        },
-        "internal_account.SendGatewayPayoutBody": {
-            "type": "object",
-            "properties": {
-                "amount": {
-                    "type": "integer",
-                    "example": 100000
-                },
-                "bank_account_name": {
-                    "type": "string",
-                    "example": "Budi Santoso"
-                },
-                "bank_account_number": {
-                    "type": "string",
-                    "example": "0123456789"
-                },
-                "bank_code": {
-                    "type": "string",
-                    "example": "BNINIDJA"
-                },
-                "invoice_number": {
-                    "type": "string",
-                    "example": "INV/2026/001"
                 }
             }
         },
@@ -3632,34 +2996,6 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_account.XenditAccountInfo": {
-            "type": "object",
-            "properties": {
-                "email": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "public_profile": {
-                    "type": "object",
-                    "properties": {
-                        "country": {
-                            "type": "string"
-                        },
-                        "name": {
-                            "type": "string"
-                        }
-                    }
-                },
-                "status": {
-                    "type": "string"
-                },
-                "type": {
-                    "type": "string"
-                }
-            }
-        },
         "internal_payment.ConfirmManualPaymentBody": {
             "type": "object",
             "properties": {
@@ -3763,7 +3099,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "result_url": {
-                    "description": "optional; DOKU result page URL",
+                    "description": "optional; post-payment redirect URL",
                     "type": "string"
                 },
                 "shipping_fee": {

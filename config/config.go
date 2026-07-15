@@ -32,14 +32,6 @@ type Configuration struct {
 	GeoapifyAPIKey  string `env:"GEOAPIFY_API_KEY"`
 	GeoapifyBaseURL string `env:"GEOAPIFY_BASE_URL"`
 
-	DokuClientID  string `env:"DOKU_CLIENT_ID"`
-	DokuSecretKey string `env:"DOKU_SECRET_KEY"`
-	DokuBaseURL   string `env:"DOKU_BASE_URL" envDefault:"https://api-sandbox.doku.com"`
-
-	XenditAPIKey        string `env:"XENDIT_API_KEY"`
-	XenditBaseURL       string `env:"XENDIT_BASE_URL" envDefault:"https://api.xendit.co"`
-	XenditCallbackToken string `env:"XENDIT_CALLBACK_TOKEN"`
-
 	DurianPayAPIKey  string `env:"DURIANPAY_API_KEY"`
 	DurianPayBaseURL string `env:"DURIANPAY_BASE_URL" envDefault:"https://api.durianpay.id"`
 
