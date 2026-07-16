@@ -32,6 +32,23 @@ type LoginResponse struct {
 	Token string `json:"token"`
 }
 
+// TopupBody is the request body for POST /admin/merchants/:tenantId/topup.
+type TopupBody struct {
+	Amount   int64  `json:"amount" example:"500000"`
+	Currency string `json:"currency" example:"IDR"`
+	Note     string `json:"note" example:"Manual top-up"`
+}
+
+// ShippingTopup is the created topup record returned by the admin topup endpoint.
+type ShippingTopup struct {
+	ID        string `json:"id"`
+	TenantID  int64  `json:"tenant_id"`
+	Amount    int64  `json:"amount"`
+	Currency  string `json:"currency"`
+	Note      string `json:"note,omitempty"`
+	CreatedAt string `json:"created_at"`
+}
+
 // AdminTransaction is a simplified payment transaction view for the admin panel.
 type AdminTransaction struct {
 	ID             uuid.UUID  `json:"id"`

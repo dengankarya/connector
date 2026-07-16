@@ -40,6 +40,17 @@ definitions:
       next_cursor:
         type: string
     type: object
+  github_com_dengankarya_connector_common.PaginationResponse-internal_admin_AdminTransaction:
+    properties:
+      has_more:
+        type: boolean
+      items:
+        items:
+          $ref: '#/definitions/internal_admin.AdminTransaction'
+        type: array
+      next_cursor:
+        type: string
+    type: object
   github_com_dengankarya_connector_common.Response:
     properties:
       data: {}
@@ -758,6 +769,50 @@ definitions:
       tenant_id:
         type: integer
     type: object
+  internal_account.PayoutRequest:
+    properties:
+      account_name:
+        type: string
+      account_number:
+        type: string
+      amount:
+        type: integer
+      bank_code:
+        type: string
+      created_at:
+        type: string
+      currency:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      status:
+        type: string
+      tenant_id:
+        type: integer
+    type: object
+  internal_account.PayoutRequestBody:
+    properties:
+      account_name:
+        example: Budi Santoso
+        type: string
+      account_number:
+        example: "1234567890"
+        type: string
+      amount:
+        example: 500000
+        type: integer
+      bank_code:
+        example: BCA
+        type: string
+      currency:
+        example: IDR
+        type: string
+      description:
+        example: Pencairan saldo Juli 2026
+        type: string
+    type: object
   internal_account.ShippingBalance:
     properties:
       available:
@@ -840,6 +895,101 @@ definitions:
         - $ref: '#/definitions/internal_account.ShippingBalance'
         description: Shipping wallet — available funds and funds on hold for pending
           shipments.
+    type: object
+  internal_admin.AdminPayout:
+    properties:
+      account_name:
+        type: string
+      account_number:
+        type: string
+      amount:
+        type: integer
+      bank_code:
+        type: string
+      created_at:
+        type: string
+      currency:
+        type: string
+      description:
+        type: string
+      failure_reason:
+        type: string
+      id:
+        type: string
+      processed_at:
+        type: string
+      provider:
+        type: string
+      status:
+        type: string
+      tenant_id:
+        type: integer
+    type: object
+  internal_admin.AdminTransaction:
+    properties:
+      amount:
+        type: integer
+      created_at:
+        type: string
+      currency:
+        type: string
+      id:
+        type: string
+      merchant_amount:
+        type: integer
+      order_number:
+        type: string
+      paid_at:
+        type: string
+      payment_method:
+        type: string
+      platform_fee:
+        type: integer
+      provider:
+        type: string
+      status:
+        type: string
+      tenant_id:
+        type: integer
+    type: object
+  internal_admin.LoginBody:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    type: object
+  internal_admin.LoginResponse:
+    properties:
+      token:
+        type: string
+    type: object
+  internal_admin.ShippingTopup:
+    properties:
+      amount:
+        type: integer
+      created_at:
+        type: string
+      currency:
+        type: string
+      id:
+        type: string
+      note:
+        type: string
+      tenant_id:
+        type: integer
+    type: object
+  internal_admin.TopupBody:
+    properties:
+      amount:
+        example: 500000
+        type: integer
+      currency:
+        example: IDR
+        type: string
+      note:
+        example: Manual top-up
+        type: string
     type: object
   internal_payment.ConfirmManualPaymentBody:
     properties:
@@ -1257,6 +1407,51 @@ paths:
       summary: Release shipment hold
       tags:
       - Account
+  /accounts/payouts/request:
+    post:
+      consumes:
+      - application/json
+      description: Creates a pending payout withdrawal record for the merchant. The
+        platform operator processes the actual disbursement manually via DurianPay.
+        The amount is debited from availableToPayout once processed.
+      parameters:
+      - description: Tenant ID
+        format: int64
+        in: header
+        name: X-Tenant-ID
+        required: true
+        type: integer
+      - description: Payout request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_account.PayoutRequestBody'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Payout request created
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_account.PayoutRequest'
+              type: object
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Request a payout (merchant withdrawal)
+      tags:
+      - Account
   /accounts/transactions:
     get:
       description: Returns a cursor-paginated unified activity feed for the tenant,
@@ -1376,6 +1571,181 @@ paths:
       summary: Get transaction detail
       tags:
       - Account
+  /admin/auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Validates email + password and returns a signed JWT (24-hour expiry).
+      parameters:
+      - description: Credentials
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_admin.LoginBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: JWT token
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_admin.LoginResponse'
+              type: object
+        "400":
+          description: Missing or malformed body
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: Invalid credentials
+          schema:
+            $ref: '#/definitions/common.Response'
+      summary: Platform admin login
+      tags:
+      - Admin
+  /admin/merchants/{tenantId}/topup:
+    post:
+      consumes:
+      - application/json
+      description: Credits the shipping wallet of the specified merchant. Requires
+        admin JWT.
+      parameters:
+      - description: Merchant tenant ID
+        format: int64
+        in: path
+        name: tenantId
+        required: true
+        type: integer
+      - description: Top-up details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_admin.TopupBody'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Top-up recorded
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_admin.ShippingTopup'
+              type: object
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/common.Response'
+      summary: Top up merchant shipping balance (admin)
+      tags:
+      - Admin
+  /admin/payouts:
+    get:
+      description: Returns all payout records across all tenants, newest first.
+      parameters:
+      - description: Page size (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Offset for pagination
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Payout list
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_admin.AdminPayout'
+                  type: array
+              type: object
+        "400":
+          description: Invalid query params
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/common.Response'
+      summary: List all payouts (admin)
+      tags:
+      - Admin
+  /admin/transactions:
+    get:
+      description: Returns cross-tenant transactions, newest first. Filter by tenant_id,
+        date range, and cursor pagination.
+      parameters:
+      - description: Filter by tenant ID
+        format: int64
+        in: query
+        name: tenant_id
+        type: integer
+      - description: Start of date range (RFC3339)
+        in: query
+        name: date_from
+        type: string
+      - description: End of date range (RFC3339)
+        in: query
+        name: date_to
+        type: string
+      - description: Pagination cursor from previous response
+        in: query
+        name: cursor
+        type: string
+      - description: Page size (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Transaction list
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_dengankarya_connector_common.PaginationResponse-internal_admin_AdminTransaction'
+              type: object
+        "400":
+          description: Invalid query params
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/common.Response'
+      summary: List all transactions (admin)
+      tags:
+      - Admin
   /geocoding:
     get:
       consumes:

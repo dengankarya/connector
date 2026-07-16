@@ -49,6 +49,7 @@ func RegisterHandlers(mux fiber.Router, svc *Service, adminOnly fiber.Handler) {
 	mux.Post("/holds", ctrl.createHold)
 	mux.Post("/holds/:id/confirm", ctrl.confirmHold)
 	mux.Post("/holds/:id/release", ctrl.releaseHold)
+	mux.Post("/payouts/request", ctrl.requestPayout)
 }
 
 type controller struct {
@@ -398,6 +399,53 @@ func (ctrl *controller) releaseHold(c fiber.Ctx) error {
 		return holdActionError(c, err)
 	}
 	return c.JSON(common.Response{Status: "OK", Data: hold})
+}
+
+// requestPayout godoc
+//
+//	@Summary		Request a payout (merchant withdrawal)
+//	@Description	Creates a pending payout withdrawal record for the merchant. The platform operator processes the actual disbursement manually via DurianPay. The amount is debited from availableToPayout once processed.
+//	@Tags			Account
+//	@Accept			json
+//	@Produce		json
+//	@Param			X-Tenant-ID	header		int64										true	"Tenant ID"
+//	@Param			body		body		account.PayoutRequestBody					true	"Payout request"
+//	@Success		201			{object}	common.Response{data=account.PayoutRequest}	"Payout request created"
+//	@Failure		400			{object}	common.Response								"Invalid request"
+//	@Failure		500			{object}	common.Response								"Internal server error"
+//	@Security		ApiKeyAuth
+//	@Router			/accounts/payouts/request [post]
+func (ctrl *controller) requestPayout(c fiber.Ctx) error {
+	tenantID := mustParseTenantID(c)
+	if tenantID == 0 {
+		return badRequest(c, "X-Tenant-ID header is required")
+	}
+
+	var body PayoutRequestBody
+	if err := c.Bind().JSON(&body); err != nil {
+		return badRequest(c, err.Error())
+	}
+	if body.Amount <= 0 {
+		return badRequest(c, "amount must be greater than 0")
+	}
+	if body.BankCode == "" {
+		return badRequest(c, "bank_code is required")
+	}
+	if body.AccountNumber == "" {
+		return badRequest(c, "account_number is required")
+	}
+	if body.AccountName == "" {
+		return badRequest(c, "account_name is required")
+	}
+	if body.Currency == "" {
+		body.Currency = "IDR"
+	}
+
+	result, err := ctrl.svc.RequestPayout(c.Context(), tenantID, body)
+	if err != nil {
+		return internalError(c, err)
+	}
+	return c.Status(http.StatusCreated).JSON(common.Response{Status: "Created", Data: result})
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────

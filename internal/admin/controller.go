@@ -40,10 +40,10 @@ func RegisterHandlers(mux fiber.Router, svc *Service) {
 //	@Tags			Admin
 //	@Accept			json
 //	@Produce		json
-//	@Param			body	body		admin.LoginBody									true	"Credentials"
-//	@Success		200		{object}	common.Response{data=admin.LoginResponse}		"JWT token"
-//	@Failure		400		{object}	common.Response									"Missing or malformed body"
-//	@Failure		401		{object}	common.Response									"Invalid credentials"
+//	@Param			body	body		admin.LoginBody								true	"Credentials"
+//	@Success		200		{object}	common.Response{data=admin.LoginResponse}	"JWT token"
+//	@Failure		400		{object}	common.Response								"Missing or malformed body"
+//	@Failure		401		{object}	common.Response								"Invalid credentials"
 //	@Router			/admin/auth/login [post]
 func (ctrl *controller) login(c fiber.Ctx) error {
 	var body LoginBody
@@ -72,15 +72,15 @@ func (ctrl *controller) login(c fiber.Ctx) error {
 //	@Description	Returns cross-tenant transactions, newest first. Filter by tenant_id, date range, and cursor pagination.
 //	@Tags			Admin
 //	@Produce		json
-//	@Param			tenant_id	query		int64																		false	"Filter by tenant ID"
-//	@Param			date_from	query		string																		false	"Start of date range (RFC3339)"
-//	@Param			date_to		query		string																		false	"End of date range (RFC3339)"
-//	@Param			cursor		query		string																		false	"Pagination cursor from previous response"
-//	@Param			limit		query		int																			false	"Page size (default 20, max 100)"
+//	@Param			tenant_id	query		int64																	false	"Filter by tenant ID"
+//	@Param			date_from	query		string																	false	"Start of date range (RFC3339)"
+//	@Param			date_to		query		string																	false	"End of date range (RFC3339)"
+//	@Param			cursor		query		string																	false	"Pagination cursor from previous response"
+//	@Param			limit		query		int																		false	"Page size (default 20, max 100)"
 //	@Success		200			{object}	common.Response{data=common.PaginationResponse[admin.AdminTransaction]}	"Transaction list"
-//	@Failure		400			{object}	common.Response																"Invalid query params"
-//	@Failure		401			{object}	common.Response																"Unauthorized"
-//	@Failure		500			{object}	common.Response																"Internal server error"
+//	@Failure		400			{object}	common.Response															"Invalid query params"
+//	@Failure		401			{object}	common.Response															"Unauthorized"
+//	@Failure		500			{object}	common.Response															"Internal server error"
 //	@Router			/admin/transactions [get]
 func (ctrl *controller) listTransactions(c fiber.Ctx) error {
 	filter := AdminTxnFilter{Cursor: c.Query("cursor")}
@@ -133,12 +133,12 @@ func (ctrl *controller) listTransactions(c fiber.Ctx) error {
 //	@Description	Returns all payout records across all tenants, newest first.
 //	@Tags			Admin
 //	@Produce		json
-//	@Param			limit	query		int												false	"Page size (default 20, max 100)"
-//	@Param			offset	query		int												false	"Offset for pagination"
-//	@Success		200		{object}	common.Response{data=[]admin.AdminPayout}		"Payout list"
-//	@Failure		400		{object}	common.Response									"Invalid query params"
-//	@Failure		401		{object}	common.Response									"Unauthorized"
-//	@Failure		500		{object}	common.Response									"Internal server error"
+//	@Param			limit	query		int											false	"Page size (default 20, max 100)"
+//	@Param			offset	query		int											false	"Offset for pagination"
+//	@Success		200		{object}	common.Response{data=[]admin.AdminPayout}	"Payout list"
+//	@Failure		400		{object}	common.Response								"Invalid query params"
+//	@Failure		401		{object}	common.Response								"Unauthorized"
+//	@Failure		500		{object}	common.Response								"Internal server error"
 //	@Router			/admin/payouts [get]
 func (ctrl *controller) listPayouts(c fiber.Ctx) error {
 	limit := 20
@@ -174,8 +174,8 @@ func (ctrl *controller) listPayouts(c fiber.Ctx) error {
 //	@Accept			json
 //	@Produce		json
 //	@Param			tenantId	path		int64										true	"Merchant tenant ID"
-//	@Param			body		body		account.TopupBody							true	"Top-up details"
-//	@Success		201			{object}	common.Response{data=account.ShippingTopup}	"Top-up recorded"
+//	@Param			body		body		admin.TopupBody								true	"Top-up details"
+//	@Success		201			{object}	common.Response{data=admin.ShippingTopup}	"Top-up recorded"
 //	@Failure		400			{object}	common.Response								"Invalid request"
 //	@Failure		401			{object}	common.Response								"Unauthorized"
 //	@Failure		500			{object}	common.Response								"Internal server error"

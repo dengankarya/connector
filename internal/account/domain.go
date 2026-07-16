@@ -215,3 +215,27 @@ type CreateHoldBody struct {
 	Amount      int64  `json:"amount" example:"35000"`
 	Currency    string `json:"currency" example:"IDR"`
 }
+
+// PayoutRequestBody is the request body for POST /accounts/payouts/request.
+type PayoutRequestBody struct {
+	Amount        int64  `json:"amount" example:"500000"`
+	Currency      string `json:"currency" example:"IDR"`
+	BankCode      string `json:"bank_code" example:"BCA"`
+	AccountNumber string `json:"account_number" example:"1234567890"`
+	AccountName   string `json:"account_name" example:"Budi Santoso"`
+	Description   string `json:"description" example:"Pencairan saldo Juli 2026"`
+}
+
+// PayoutRequest is the created payout withdrawal request (status: pending).
+type PayoutRequest struct {
+	ID            uuid.UUID `json:"id"`
+	TenantID      int64     `json:"tenant_id"`
+	Amount        int64     `json:"amount"`
+	Currency      string    `json:"currency"`
+	BankCode      string    `json:"bank_code"`
+	AccountNumber string    `json:"account_number"`
+	AccountName   string    `json:"account_name"`
+	Description   string    `json:"description"`
+	Status        string    `json:"status"`
+	CreatedAt     time.Time `json:"created_at"`
+}

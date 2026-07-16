@@ -38,6 +38,32 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
+// ─── Payout requests ─────────────────────────────────────────────────────────
+
+// InsertPayoutRequest creates a pending payout withdrawal record in payment_payouts.
+// Provider is set to "manual" because platform operators process disbursements manually.
+func (r *Repository) InsertPayoutRequest(ctx context.Context, req *PayoutRequest) error {
+	req.ID = uuid.New()
+	req.Status = "pending"
+	req.CreatedAt = time.Now().UTC()
+
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO payment_payouts (
+			id, tenant_id, provider, amount, currency, status,
+			bank_code, account_number, account_name, description,
+			retry_count, max_retries, created_at, updated_at
+		) VALUES (
+			$1, $2, 'manual', $3, $4, 'pending',
+			$5, $6, $7, $8,
+			0, 0, $9, $9
+		)`,
+		req.ID, req.TenantID, req.Amount, req.Currency,
+		req.BankCode, req.AccountNumber, req.AccountName, req.Description,
+		req.CreatedAt,
+	)
+	return err
+}
+
 // ─── Activity feed ────────────────────────────────────────────────────────────
 
 // ActivityCursorPoint is the (created_at, id) keyset used for cursor pagination

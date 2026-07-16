@@ -421,3 +421,24 @@ func (s *Service) ReleaseHoldForOrder(ctx context.Context, tenantID int64, order
 func (s *Service) ListHolds(ctx context.Context, tenantID int64) ([]*ShippingHold, error) {
 	return s.repo.ListHolds(ctx, tenantID)
 }
+
+// ─── Payout requests ──────────────────────────────────────────────────────────
+
+// RequestPayout creates a pending merchant payout withdrawal record.
+// The platform operator processes the actual disbursement manually via DurianPay.
+func (s *Service) RequestPayout(ctx context.Context, tenantID int64, body PayoutRequestBody) (*PayoutRequest, error) {
+	req := &PayoutRequest{
+		TenantID:      tenantID,
+		Amount:        body.Amount,
+		Currency:      body.Currency,
+		BankCode:      body.BankCode,
+		AccountNumber: body.AccountNumber,
+		AccountName:   body.AccountName,
+		Description:   body.Description,
+	}
+	if err := s.repo.InsertPayoutRequest(ctx, req); err != nil {
+		s.logger.WithError(err).WithField("tenant_id", tenantID).Error("insert payout request failed")
+		return nil, fmt.Errorf("create payout request: %w", err)
+	}
+	return req, nil
+}
