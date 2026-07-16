@@ -36,6 +36,8 @@ type Configuration struct {
 	DurianPayBaseURL string `env:"DURIANPAY_BASE_URL" envDefault:"https://api.durianpay.id"`
 
 	WebhookBaseURL string `env:"WEBHOOK_BASE_URL"` // base URL for webhook notifications (e.g. https://connector.example.com)
+
+	AdminJWTSecret string `env:"ADMIN_JWT_SECRET"` // HMAC secret for platform-admin JWT tokens
 }
 
 func (c Configuration) IsThisRequestAuthenticated(apiKey string) bool {

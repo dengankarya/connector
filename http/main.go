@@ -19,6 +19,7 @@ import (
 	"github.com/dengankarya/connector/common"
 	"github.com/dengankarya/connector/config"
 	"github.com/dengankarya/connector/internal/account"
+	adminmod "github.com/dengankarya/connector/internal/admin"
 	"github.com/dengankarya/connector/internal/geocoding"
 	"github.com/dengankarya/connector/internal/payment"
 	"github.com/dengankarya/connector/internal/payment/jobs"
@@ -219,6 +220,20 @@ func main() {
 			asynqClient,
 			log.StandardLogger(),
 			paymentMod.WebhookProcessor,
+		)
+	}
+
+	// ── Platform admin routes ────────────────────────────────────────────────────
+	if pool != nil && cfg.AdminJWTSecret != "" {
+		adminMod := adminmod.NewModule(pool, accountMod.Service, cfg.AdminJWTSecret, log.StandardLogger())
+
+		// Public: login — no API key or JWT required
+		adminmod.RegisterAuthHandlers(apiRootGroup.Group("/admin/auth"), adminMod.Service)
+
+		// Protected: all other admin endpoints require a valid admin JWT
+		adminmod.RegisterHandlers(
+			apiRootGroup.Group("/admin", adminJWTAuth(cfg.AdminJWTSecret)),
+			adminMod.Service,
 		)
 	}
 

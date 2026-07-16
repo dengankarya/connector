@@ -14,7 +14,11 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build \
       -ldflags="-w -s" \
       -o /app/service \
-      ./http
+      ./http && \
+    CGO_ENABLED=0 GOOS=linux go build \
+      -ldflags="-w -s" \
+      -o /app/seed \
+      ./cmd/seed
 
 # ─── Stage 2: runtime ─────────────────────────────────────────────────────────
 # alpine gives us sh + wget (needed by Coolify's built-in healthcheck) at ~5 MB.
@@ -25,6 +29,7 @@ RUN apk add --no-cache curl
 WORKDIR /app
 
 COPY --from=builder /app/service /app/service
+COPY --from=builder /app/seed /app/seed
 COPY --from=builder /app/db/migrations /app/db/migrations
 
 EXPOSE 8000

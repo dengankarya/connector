@@ -2,10 +2,12 @@ package main
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/dengankarya/connector/common"
 	"github.com/dengankarya/connector/config"
 	_ "github.com/dengankarya/connector/docs"
+	"github.com/dengankarya/connector/internal/admin"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/adaptor"
 	"github.com/gofiber/fiber/v3/middleware/logger"
@@ -47,6 +49,28 @@ func adminRequest(cfg *config.Configuration) fiber.Handler {
 				Error:  "FORBIDDEN",
 			})
 		}
+		return c.Next()
+	}
+}
+
+// adminJWTAuth validates the Bearer token in Authorization header using the admin JWT secret.
+// Sets "admin_id" in fiber.Ctx locals on success.
+func adminJWTAuth(secret string) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		authHeader := c.Get("Authorization")
+		const prefix = "Bearer "
+		if !strings.HasPrefix(authHeader, prefix) {
+			return c.Status(http.StatusUnauthorized).JSON(common.Response{
+				Status: "Unauthorized", Error: "missing or invalid Authorization header",
+			})
+		}
+		adminID, err := admin.VerifyToken(strings.TrimPrefix(authHeader, prefix), secret)
+		if err != nil {
+			return c.Status(http.StatusUnauthorized).JSON(common.Response{
+				Status: "Unauthorized", Error: err.Error(),
+			})
+		}
+		c.Locals("admin_id", adminID)
 		return c.Next()
 	}
 }
