@@ -25,6 +25,7 @@ func RegisterAuthHandlers(mux fiber.Router, svc *Service) {
 
 // RegisterHandlers mounts JWT-protected admin endpoints.
 //
+//	PUT    /admin/me/password
 //	GET    /admin/transactions
 //	GET    /admin/payouts
 //	POST   /admin/merchants/:tenantId/topup
@@ -38,6 +39,9 @@ func RegisterAuthHandlers(mux fiber.Router, svc *Service) {
 //	DELETE /admin/users/:id
 func RegisterHandlers(mux fiber.Router, svc *Service) {
 	ctrl := &controller{svc: svc}
+
+	// ── Self-service — any authenticated admin ─────────────────────────────────
+	mux.Put("/me/password", ctrl.changePassword)
 
 	// ── Cross-tenant data — permission-guarded ────────────────────────────────
 	mux.Get("/transactions", RequirePermission("transactions", "READ"), ctrl.listTransactions)
@@ -229,6 +233,40 @@ func (ctrl *controller) topup(c fiber.Ctx) error {
 		return internalError(c, err)
 	}
 	return c.Status(http.StatusCreated).JSON(common.Response{Status: "Created", Data: topup})
+}
+
+// ─── Self-service ─────────────────────────────────────────────────────────────
+
+func (ctrl *controller) changePassword(c fiber.Ctx) error {
+	adminID, ok := adminIDFromCtx(c)
+	if !ok {
+		return badRequest(c, "missing admin identity")
+	}
+	var body struct {
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
+	}
+	if err := c.Bind().JSON(&body); err != nil {
+		return badRequest(c, "invalid request body")
+	}
+	if body.OldPassword == "" || body.NewPassword == "" {
+		return badRequest(c, "old_password and new_password are required")
+	}
+	if len(body.NewPassword) < 8 {
+		return badRequest(c, "new password must be at least 8 characters")
+	}
+	if err := ctrl.svc.ChangePassword(c.Context(), adminID, body.OldPassword, body.NewPassword); err != nil {
+		if isDomainErr(err, "AU_") {
+			return c.Status(http.StatusUnauthorized).JSON(common.Response{
+				Status: "Unauthorized", Error: "current password is incorrect",
+			})
+		}
+		if isDomainErr(err, "RB_") {
+			return badRequest(c, err.Error())
+		}
+		return internalError(c, err)
+	}
+	return c.JSON(common.Response{Status: "OK"})
 }
 
 // ─── Role management ──────────────────────────────────────────────────────────

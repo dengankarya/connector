@@ -88,6 +88,32 @@ func (r *Repository) GetUserPermissions(ctx context.Context, userID uuid.UUID) (
 	return isSuperAdmin, perms, rows.Err()
 }
 
+// GetByID fetches an admin user by primary key.
+func (r *Repository) GetByID(ctx context.Context, id uuid.UUID) (*AdminUser, error) {
+	row := dbFromContext(ctx, r.pool).QueryRow(ctx, `
+		SELECT id::text, email, password_hash, is_super_admin, role_id::text, created_at, updated_at
+		FROM admin_users
+		WHERE id = $1`, id)
+
+	var (
+		u      AdminUser
+		idStr  string
+		roleID *string
+	)
+	if err := row.Scan(&idStr, &u.Email, &u.PasswordHash, &u.IsSuperAdmin, &roleID, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrInvalidCredentials
+		}
+		return nil, fmt.Errorf("get admin user by id: %w", err)
+	}
+	u.ID, _ = uuid.Parse(idStr)
+	if roleID != nil {
+		rid, _ := uuid.Parse(*roleID)
+		u.RoleID = &rid
+	}
+	return &u, nil
+}
+
 // Create inserts a new admin user.
 func (r *Repository) Create(ctx context.Context, u *AdminUser) error {
 	if u.ID == uuid.Nil {
@@ -367,6 +393,19 @@ func (r *Repository) CreateUser(ctx context.Context, email, passwordHash string,
 		_ = r.pool.QueryRow(ctx, `SELECT name FROM admin_roles WHERE id = $1`, u.RoleID).Scan(&u.RoleName)
 	}
 	return &u, nil
+}
+
+// UpdatePassword sets a new bcrypt-hashed password for any admin user.
+func (r *Repository) UpdatePassword(ctx context.Context, id uuid.UUID, hashedPassword string) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE admin_users SET password_hash = $2, updated_at = NOW() WHERE id = $1`, id, hashedPassword)
+	if err != nil {
+		return fmt.Errorf("update password: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
 }
 
 // UpdateUser updates the role assignment for an admin user.

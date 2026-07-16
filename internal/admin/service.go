@@ -118,6 +118,25 @@ func (s *Service) UpdateUser(ctx context.Context, id uuid.UUID, roleID *uuid.UUI
 	return s.repo.UpdateUser(ctx, id, roleID)
 }
 
+// ChangePassword verifies the user's current password then stores the new one.
+func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, oldPassword, newPassword string) error {
+	if newPassword == "" {
+		return common.NewDomainError("RB_INVALID", "new password cannot be empty")
+	}
+	user, err := s.repo.GetByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(oldPassword)); err != nil {
+		return ErrInvalidCredentials
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	return s.repo.UpdatePassword(ctx, userID, string(hash))
+}
+
 // DeleteUser removes a non-super-admin user.
 func (s *Service) DeleteUser(ctx context.Context, id uuid.UUID) error {
 	return s.repo.DeleteUser(ctx, id)
