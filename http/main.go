@@ -192,29 +192,31 @@ func main() {
 		webhook.RegisterIngestHandler(apiRootGroup, "/webhook/durianpay", durianpayClient, paymentMod.EventRepo, paymentMod.WebhookLogRepo, asynqClient, log.StandardLogger(), nil)
 	}
 
-	// ── Authenticated routes — scoped to a group so /monitor stays public ────
-	authGroup := apiRootGroup.Group("", authenticatedRequest(cfg))
+	// ── Authenticated routes — each group carries its own API-key middleware ───
+	// Using Group("", mw) with an empty prefix leaks middleware to all routes on
+	// the parent router in Fiber v3, so each module gets an explicit prefix instead.
+	auth := authenticatedRequest(cfg)
 
-	shipping.RegisterHandlers(authGroup.Group("/shipments"), shippingMod.Service)
+	shipping.RegisterHandlers(apiRootGroup.Group("/shipments", auth), shippingMod.Service)
 
 	if accountMod.Service != nil {
-		account.RegisterHandlers(authGroup.Group("/accounts"), accountMod.Service, adminRequest(cfg))
+		account.RegisterHandlers(apiRootGroup.Group("/accounts", auth), accountMod.Service, adminRequest(cfg))
 	}
 
 	wilayahClient := wilayah.NewClient(cfg.WilayahBaseURL)
 	cachedWilayah := region.NewCachedClient(wilayahClient)
 	regionSvc := region.NewRegionService(cachedWilayah)
-	region.RegisterHandlers(authGroup.Group("/regions"), regionSvc)
+	region.RegisterHandlers(apiRootGroup.Group("/regions", auth), regionSvc)
 
 	geoapifyClient := geoapify.NewClient(cfg.GeoapifyAPIKey, cfg.GeoapifyBaseURL)
 	cachedGeocoder := geocoding.NewCachedGeocoder(geoapifyClient)
 	geocodingService := geocoding.NewService(cachedGeocoder, log.StandardLogger())
-	geocoding.RegisterHandlers(authGroup.Group("/geocoding"), geocodingService)
+	geocoding.RegisterHandlers(apiRootGroup.Group("/geocoding", auth), geocodingService)
 
 	// Payment module endpoints (requires DB).
 	if paymentMod.PaymentService != nil {
 		payment.RegisterPaymentHandlers(
-			authGroup.Group("/payments"),
+			apiRootGroup.Group("/payments", auth),
 			paymentMod.PaymentService,
 			paymentMod.Providers,
 			asynqClient,
