@@ -2,10 +2,7 @@ package admin
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/dengankarya/connector/common"
 	"github.com/dengankarya/connector/internal/account"
@@ -149,38 +146,17 @@ const (
 	maxPageSize     = 100
 )
 
-// ListTransactions returns cross-tenant transactions with optional cursor pagination.
-func (s *Service) ListTransactions(ctx context.Context, f AdminTxnFilter) (*common.PaginationResponse[*AdminTransaction], error) {
-	limit := f.Limit
-	if limit <= 0 {
-		limit = defaultPageSize
-	} else if limit > maxPageSize {
-		limit = maxPageSize
+// ListTransactions returns cross-tenant transactions (all types) with offset pagination.
+func (s *Service) ListTransactions(ctx context.Context, f AdminTxnFilter) ([]*AdminTransaction, error) {
+	if f.Limit <= 0 {
+		f.Limit = defaultPageSize
+	} else if f.Limit > maxPageSize {
+		f.Limit = maxPageSize
 	}
-
-	var cursor *TxnCursorPoint
-	if f.Cursor != "" {
-		var err error
-		cursor, err = decodeTxnCursor(f.Cursor)
-		if err != nil {
-			return nil, common.NewDomainError("BR_INVALID_CURSOR", "invalid pagination cursor")
-		}
+	if f.Offset < 0 {
+		f.Offset = 0
 	}
-
-	f.Limit = limit + 1 // fetch one extra to detect has_more
-	items, err := s.repo.ListTransactions(ctx, f, cursor)
-	if err != nil {
-		return nil, err
-	}
-
-	result := &common.PaginationResponse[*AdminTransaction]{Items: items}
-	if len(items) > limit {
-		result.Items = items[:limit]
-		result.HasMore = true
-		last := result.Items[limit-1]
-		result.NextCursor = encodeTxnCursor(last.CreatedAt, last.ID)
-	}
-	return result, nil
+	return s.repo.ListTransactions(ctx, f)
 }
 
 // ─── Payouts ──────────────────────────────────────────────────────────────────
@@ -211,30 +187,3 @@ func (s *Service) Topup(ctx context.Context, tenantID int64, amount int64, curre
 	})
 }
 
-// ─── Cursor encoding ──────────────────────────────────────────────────────────
-
-type txnCursorPayload struct {
-	T time.Time `json:"t"`
-	I string    `json:"i"`
-}
-
-func encodeTxnCursor(createdAt time.Time, id uuid.UUID) string {
-	b, _ := json.Marshal(txnCursorPayload{T: createdAt.UTC(), I: id.String()})
-	return base64.RawURLEncoding.EncodeToString(b)
-}
-
-func decodeTxnCursor(s string) (*TxnCursorPoint, error) {
-	b, err := base64.RawURLEncoding.DecodeString(s)
-	if err != nil {
-		return nil, fmt.Errorf("base64 decode: %w", err)
-	}
-	var p txnCursorPayload
-	if err := json.Unmarshal(b, &p); err != nil {
-		return nil, fmt.Errorf("json unmarshal: %w", err)
-	}
-	id, err := uuid.Parse(p.I)
-	if err != nil {
-		return nil, fmt.Errorf("parse uuid: %w", err)
-	}
-	return &TxnCursorPoint{CreatedAt: p.T, ID: id}, nil
-}

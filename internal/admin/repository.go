@@ -436,23 +436,22 @@ func (r *Repository) DeleteUser(ctx context.Context, id uuid.UUID) error {
 
 // ─── Cross-tenant queries ────────────────────────────────────────────────────
 
-const adminTxnColumns = `
-	id::text, tenant_id, COALESCE(order_number, ''), provider,
-	amount, currency, platform_fee, merchant_amount,
-	status, COALESCE(payment_method, ''),
-	created_at, paid_at`
-
 func scanAdminTransaction(row pgx.Row) (*AdminTransaction, error) {
 	var (
-		t      AdminTransaction
-		idStr  string
-		paidAt *time.Time
+		t                       AdminTransaction
+		idStr                   string
+		paidAt, processedAt     *time.Time
+		platformFee, merchantAmount *int64
 	)
 	if err := row.Scan(
-		&idStr, &t.TenantID, &t.OrderNumber, &t.Provider,
-		&t.Amount, &t.Currency, &t.PlatformFee, &t.MerchantAmount,
-		&t.Status, &t.PaymentMethod,
-		&t.CreatedAt, &paidAt,
+		&idStr, &t.TenantID, &t.Type,
+		&t.Amount, &t.Currency, &t.Description, &t.Status,
+		&t.OrderNumber, &t.Provider, &t.PaymentMethod,
+		&platformFee, &merchantAmount,
+		&paidAt,
+		&t.BankCode, &t.AccountNumber, &t.AccountName, &t.FailureReason,
+		&processedAt,
+		&t.CreatedAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -461,12 +460,28 @@ func scanAdminTransaction(row pgx.Row) (*AdminTransaction, error) {
 	}
 	t.ID, _ = uuid.Parse(idStr)
 	t.PaidAt = paidAt
+	t.ProcessedAt = processedAt
+	if platformFee != nil {
+		t.PlatformFee = *platformFee
+	}
+	if merchantAmount != nil {
+		t.MerchantAmount = *merchantAmount
+	}
 	return &t, nil
 }
 
-// ListTransactions returns cross-tenant transactions, newest first.
-// TenantID in filter is optional — nil means all tenants.
-func (r *Repository) ListTransactions(ctx context.Context, f AdminTxnFilter, cursor *TxnCursorPoint) ([]*AdminTransaction, error) {
+const adminTxnSelect = `
+	id::text, tenant_id, type,
+	amount, currency, COALESCE(description, ''), status,
+	COALESCE(order_number, ''), COALESCE(provider, ''), COALESCE(payment_method, ''),
+	platform_fee, merchant_amount,
+	paid_at,
+	COALESCE(bank_code, ''), COALESCE(account_number, ''), COALESCE(account_name, ''), COALESCE(failure_reason, ''),
+	processed_at,
+	created_at`
+
+// ListTransactions returns cross-tenant transactions (all types), newest first, with offset pagination.
+func (r *Repository) ListTransactions(ctx context.Context, f AdminTxnFilter) ([]*AdminTransaction, error) {
 	var (
 		args  []any
 		where []string
@@ -476,6 +491,10 @@ func (r *Repository) ListTransactions(ctx context.Context, f AdminTxnFilter, cur
 		args = append(args, *f.TenantID)
 		where = append(where, fmt.Sprintf("tenant_id = $%d", len(args)))
 	}
+	if f.Type != "" {
+		args = append(args, f.Type)
+		where = append(where, fmt.Sprintf("type = $%d", len(args)))
+	}
 	if f.From != nil {
 		args = append(args, *f.From)
 		where = append(where, fmt.Sprintf("created_at >= $%d", len(args)))
@@ -484,12 +503,16 @@ func (r *Repository) ListTransactions(ctx context.Context, f AdminTxnFilter, cur
 		args = append(args, *f.To)
 		where = append(where, fmt.Sprintf("created_at < $%d", len(args)))
 	}
-	if cursor != nil {
-		args = append(args, cursor.CreatedAt, cursor.ID)
-		where = append(where, fmt.Sprintf("(created_at, id) < ($%d, $%d)", len(args)-1, len(args)))
-	}
 
-	args = append(args, f.Limit)
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	offset := f.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	args = append(args, limit, offset)
 
 	whereClause := ""
 	if len(where) > 0 {
@@ -497,8 +520,8 @@ func (r *Repository) ListTransactions(ctx context.Context, f AdminTxnFilter, cur
 	}
 
 	q := fmt.Sprintf(
-		`SELECT %s FROM payment_transactions %s ORDER BY created_at DESC, id DESC LIMIT $%d`,
-		adminTxnColumns, whereClause, len(args),
+		`SELECT %s FROM transactions %s ORDER BY created_at DESC, id DESC LIMIT $%d OFFSET $%d`,
+		adminTxnSelect, whereClause, len(args)-1, len(args),
 	)
 
 	rows, err := dbFromContext(ctx, r.pool).Query(ctx, q, args...)
@@ -520,59 +543,25 @@ func (r *Repository) ListTransactions(ctx context.Context, f AdminTxnFilter, cur
 	return result, rows.Err()
 }
 
-const adminPayoutColumns = `
-	id::text, tenant_id, provider,
-	amount, currency, status,
-	COALESCE(bank_code, ''),
-	COALESCE(account_number, ''),
-	COALESCE(account_name, ''),
-	COALESCE(description, ''),
-	COALESCE(failure_reason, ''),
-	created_at, processed_at`
-
-func scanAdminPayout(row pgx.Row) (*AdminPayout, error) {
-	var (
-		p           AdminPayout
-		idStr       string
-		processedAt *time.Time
-	)
-	if err := row.Scan(
-		&idStr, &p.TenantID, &p.Provider,
-		&p.Amount, &p.Currency, &p.Status,
-		&p.BankCode,
-		&p.AccountNumber,
-		&p.AccountName,
-		&p.Description,
-		&p.FailureReason,
-		&p.CreatedAt, &processedAt,
-	); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("scan admin payout: %w", err)
-	}
-	p.ID, _ = uuid.Parse(idStr)
-	p.ProcessedAt = processedAt
-	return &p, nil
-}
-
-// ListPayouts returns payouts across all tenants, newest first, with optional filters and offset pagination.
+// ListPayouts returns payout records across all tenants, newest first, with optional filters and offset pagination.
 func (r *Repository) ListPayouts(ctx context.Context, limit, offset int, f AdminPayoutFilter) ([]*AdminPayout, error) {
 	args := []any{limit, offset}
-	where := ""
+	where := []string{"type = 'payout'"}
 	if f.TenantID != nil {
 		args = append(args, *f.TenantID)
-		where += fmt.Sprintf(" AND tenant_id = $%d", len(args))
+		where = append(where, fmt.Sprintf("tenant_id = $%d", len(args)))
 	}
 	if f.Status != "" {
 		args = append(args, f.Status)
-		where += fmt.Sprintf(" AND status = $%d", len(args))
+		where = append(where, fmt.Sprintf("status = $%d", len(args)))
 	}
 
-	rows, err := dbFromContext(ctx, r.pool).Query(ctx,
-		`SELECT `+adminPayoutColumns+` FROM payment_payouts WHERE true`+where+
-			` ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
-		args...)
+	q := fmt.Sprintf(
+		`SELECT %s FROM transactions WHERE %s ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+		adminTxnSelect, strings.Join(where, " AND "),
+	)
+
+	rows, err := dbFromContext(ctx, r.pool).Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list admin payouts: %w", err)
 	}
@@ -580,7 +569,7 @@ func (r *Repository) ListPayouts(ctx context.Context, limit, offset int, f Admin
 
 	var result []*AdminPayout
 	for rows.Next() {
-		p, err := scanAdminPayout(rows)
+		p, err := scanAdminTransaction(rows)
 		if err != nil {
 			return nil, err
 		}

@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// TransactionRepository manages payment_transactions rows.
+// TransactionRepository manages payment rows in the unified transactions table.
 type TransactionRepository struct {
 	pool *pgxpool.Pool
 }
@@ -23,7 +23,7 @@ func NewTransactionRepository(pool *pgxpool.Pool) *TransactionRepository {
 	return &TransactionRepository{pool: pool}
 }
 
-// Create inserts a new transaction. Returns domain.ErrDuplicateIdempotencyKey on conflict.
+// Create inserts a new payment transaction. Returns domain.ErrDuplicateIdempotencyKey on conflict.
 func (r *TransactionRepository) Create(ctx context.Context, txn *domain.PaymentTransaction) error {
 	if txn.ID == uuid.Nil {
 		txn.ID = uuid.New()
@@ -37,22 +37,22 @@ func (r *TransactionRepository) Create(ctx context.Context, txn *domain.PaymentT
 	payDataJSON, payDataValid := marshalJSON(txn.PaymentData)
 
 	q := `
-		INSERT INTO payment_transactions (
-			id, tenant_id, order_number, idempotency_key,
+		INSERT INTO transactions (
+			id, tenant_id, type, order_number, idempotency_key,
 			provider, provider_invoice_id, provider_payment_id, checkout_url,
 			payment_method, payment_channel,
 			amount, currency, platform_fee, shipping_fee, merchant_amount,
 			status, description, metadata, payment_data,
 			expires_at, created_at, updated_at, version
 		) VALUES (
-			$1, $2, $3, $4,
+			$1, $2, 'payment', $3, $4,
 			$5, $6, $7, $8,
 			$9, $10,
 			$11, $12, $13, $14, $15,
 			$16, $17, $18::jsonb, $19::jsonb,
 			$20, $21, $22, $23
 		)
-		ON CONFLICT (tenant_id, idempotency_key) DO NOTHING`
+		ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`
 
 	tag, err := dbFromContext(ctx, r.pool).Exec(ctx, q,
 		txn.ID, txn.TenantID, nilIfEmpty(txn.OrderNumber), txn.IdempotencyKey,
@@ -66,7 +66,7 @@ func (r *TransactionRepository) Create(ctx context.Context, txn *domain.PaymentT
 		if isDuplicateKeyError(err) {
 			return domain.ErrDuplicateIdempotencyKey
 		}
-		return fmt.Errorf("insert payment_transaction: %w", err)
+		return fmt.Errorf("insert transaction (payment): %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return domain.ErrDuplicateIdempotencyKey
@@ -74,37 +74,37 @@ func (r *TransactionRepository) Create(ctx context.Context, txn *domain.PaymentT
 	return nil
 }
 
-// GetByID fetches a transaction by primary key (no lock).
+// GetByID fetches a payment transaction by primary key (no lock).
 func (r *TransactionRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.PaymentTransaction, error) {
 	row := dbFromContext(ctx, r.pool).QueryRow(ctx,
-		`SELECT `+txnColumns+` FROM payment_transactions WHERE id = $1`, id)
+		`SELECT `+txnColumns+` FROM transactions WHERE id = $1 AND type = 'payment'`, id)
 	return scanTransaction(row)
 }
 
-// GetByIDForUpdate fetches a transaction with SELECT FOR UPDATE.
+// GetByIDForUpdate fetches a payment transaction with SELECT FOR UPDATE.
 // Must be called within a DB transaction (ctx must carry a pgx.Tx via WithTx).
 func (r *TransactionRepository) GetByIDForUpdate(ctx context.Context, id uuid.UUID) (*domain.PaymentTransaction, error) {
 	row := dbFromContext(ctx, r.pool).QueryRow(ctx,
-		`SELECT `+txnColumns+` FROM payment_transactions WHERE id = $1 FOR UPDATE`, id)
+		`SELECT `+txnColumns+` FROM transactions WHERE id = $1 AND type = 'payment' FOR UPDATE`, id)
 	return scanTransaction(row)
 }
 
-// GetByProviderInvoiceIDForUpdate fetches a transaction by provider+invoiceID with a row lock.
+// GetByProviderInvoiceIDForUpdate fetches a payment transaction by provider+invoiceID with a row lock.
 // Must be called within a DB transaction.
 func (r *TransactionRepository) GetByProviderInvoiceIDForUpdate(ctx context.Context, provider, invoiceID string) (*domain.PaymentTransaction, error) {
 	row := dbFromContext(ctx, r.pool).QueryRow(ctx,
-		`SELECT `+txnColumns+` FROM payment_transactions
-		 WHERE provider = $1 AND provider_invoice_id = $2
+		`SELECT `+txnColumns+` FROM transactions
+		 WHERE provider = $1 AND provider_invoice_id = $2 AND type = 'payment'
 		 FOR UPDATE`,
 		provider, invoiceID)
 	return scanTransaction(row)
 }
 
-// GetByProviderInvoiceID fetches a transaction by provider + invoice ID without a row lock.
+// GetByProviderInvoiceID fetches a payment transaction by provider + invoice ID without a row lock.
 // Use GetByProviderInvoiceIDForUpdate inside a transaction when mutation follows.
 func (r *TransactionRepository) GetByProviderInvoiceID(ctx context.Context, prov, invoiceID string) (*domain.PaymentTransaction, error) {
 	row := dbFromContext(ctx, r.pool).QueryRow(ctx,
-		`SELECT `+txnColumns+` FROM payment_transactions WHERE provider = $1 AND provider_invoice_id = $2`,
+		`SELECT `+txnColumns+` FROM transactions WHERE provider = $1 AND provider_invoice_id = $2 AND type = 'payment'`,
 		prov, invoiceID)
 	return scanTransaction(row)
 }
@@ -116,7 +116,7 @@ func (r *TransactionRepository) Update(ctx context.Context, txn *domain.PaymentT
 	metaJSON, metaValid := marshalJSON(txn.Metadata)
 
 	q := `
-		UPDATE payment_transactions SET
+		UPDATE transactions SET
 			provider_invoice_id       = $1,
 			provider_payment_id       = $2,
 			payment_method            = $3,
@@ -134,7 +134,7 @@ func (r *TransactionRepository) Update(ctx context.Context, txn *domain.PaymentT
 			estimated_settlement_time = $15,
 			updated_at                = $16,
 			version                   = $17
-		WHERE id = $18 AND version = $19`
+		WHERE id = $18 AND version = $19 AND type = 'payment'`
 
 	tag, err := dbFromContext(ctx, r.pool).Exec(ctx, q,
 		nilIfEmpty(txn.ProviderInvoiceID),
@@ -158,7 +158,7 @@ func (r *TransactionRepository) Update(ctx context.Context, txn *domain.PaymentT
 		txn.Version-1, // expected old version
 	)
 	if err != nil {
-		return fmt.Errorf("update payment_transaction: %w", err)
+		return fmt.Errorf("update transaction: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return domain.ErrVersionConflict
@@ -170,7 +170,7 @@ func (r *TransactionRepository) Update(ctx context.Context, txn *domain.PaymentT
 // Used by the settlement sync job to know which tenants to snapshot.
 func (r *TransactionRepository) ListDistinctTenants(ctx context.Context) ([]int64, error) {
 	rows, err := dbFromContext(ctx, r.pool).Query(ctx, `
-		SELECT DISTINCT tenant_id FROM payment_transactions ORDER BY tenant_id`)
+		SELECT DISTINCT tenant_id FROM transactions WHERE type = 'payment' ORDER BY tenant_id`)
 	if err != nil {
 		return nil, fmt.Errorf("list distinct tenants: %w", err)
 	}
@@ -189,17 +189,15 @@ func (r *TransactionRepository) ListDistinctTenants(ctx context.Context) ([]int6
 
 // PendingSettlementSums holds aggregate totals for all paid-but-not-settled transactions.
 type PendingSettlementSums struct {
-	MerchantAmount int64 // SUM(merchant_amount) — net amount merchant will receive
-	PlatformFee    int64 // SUM(platform_fee)
-	XenditFee      int64 // SUM(xendit_fee)
-	VAT            int64 // SUM(vat)
-	Withholding    int64 // SUM(xendit_withholding_tax + third_party_wht)
+	MerchantAmount int64
+	PlatformFee    int64
+	XenditFee      int64
+	VAT            int64
+	Withholding    int64
 }
 
 // SumPendingSettlement aggregates all paid-but-not-settled transactions for a tenant.
-// "Pending" means status = 'paid' — money collected from customer but not yet marked settled by Xendit.
-// Manual payments (provider = 'manual_transfer') are excluded; those funds are already
-// with the merchant and are not held in platform escrow.
+// Manual payments (provider = 'manual_transfer') are excluded.
 func (r *TransactionRepository) SumPendingSettlement(ctx context.Context, tenantID int64) (*PendingSettlementSums, error) {
 	var s PendingSettlementSums
 	err := dbFromContext(ctx, r.pool).QueryRow(ctx, `
@@ -209,8 +207,8 @@ func (r *TransactionRepository) SumPendingSettlement(ctx context.Context, tenant
 			COALESCE(SUM(xendit_fee), 0),
 			COALESCE(SUM(vat), 0),
 			COALESCE(SUM(xendit_withholding_tax + third_party_wht), 0)
-		FROM payment_transactions
-		WHERE tenant_id = $1 AND status = 'paid' AND provider != 'manual_transfer'`, tenantID).
+		FROM transactions
+		WHERE tenant_id = $1 AND type = 'payment' AND status = 'paid' AND provider != 'manual_transfer'`, tenantID).
 		Scan(&s.MerchantAmount, &s.PlatformFee, &s.XenditFee, &s.VAT, &s.Withholding)
 	if err != nil {
 		return nil, fmt.Errorf("sum pending settlement for tenant %d: %w", tenantID, err)
@@ -219,9 +217,7 @@ func (r *TransactionRepository) SumPendingSettlement(ctx context.Context, tenant
 }
 
 // SumSettled aggregates all settled transactions for a tenant.
-// "Settled" means status = 'settled' and Xendit confirmed funds landed in the platform
-// master account. Manual payments (provider = 'manual_transfer') are excluded: those
-// funds were never in platform custody and are not withdrawable from the platform.
+// Manual payments (provider = 'manual_transfer') are excluded.
 func (r *TransactionRepository) SumSettled(ctx context.Context, tenantID int64) (*PendingSettlementSums, error) {
 	var s PendingSettlementSums
 	err := dbFromContext(ctx, r.pool).QueryRow(ctx, `
@@ -231,8 +227,8 @@ func (r *TransactionRepository) SumSettled(ctx context.Context, tenantID int64) 
 			COALESCE(SUM(xendit_fee), 0),
 			COALESCE(SUM(vat), 0),
 			COALESCE(SUM(xendit_withholding_tax + third_party_wht), 0)
-		FROM payment_transactions
-		WHERE tenant_id = $1 AND status = 'settled' AND provider != 'manual_transfer'`, tenantID).
+		FROM transactions
+		WHERE tenant_id = $1 AND type = 'payment' AND status = 'settled' AND provider != 'manual_transfer'`, tenantID).
 		Scan(&s.MerchantAmount, &s.PlatformFee, &s.XenditFee, &s.VAT, &s.Withholding)
 	if err != nil {
 		return nil, fmt.Errorf("sum settled for tenant %d: %w", tenantID, err)
@@ -248,23 +244,15 @@ type CursorPoint struct {
 
 // ListParams controls cursor-paginated listing of transactions for a single tenant.
 type ListParams struct {
-	// Limit is the maximum number of rows to return. Callers typically pass (pageSize+1) to detect has_more.
-	Limit int
-	// Cursor, when non-nil, returns rows that sort after this point (i.e. older records in DESC order).
-	Cursor *CursorPoint
-	// Status restricts results to the given statuses; empty means all statuses.
-	Status []domain.PaymentStatus
-	// CreatedFrom, when non-nil, restricts results to transactions created at or after this time.
+	Limit       int
+	Cursor      *CursorPoint
+	Status      []domain.PaymentStatus
 	CreatedFrom *time.Time
-	// CreatedTo, when non-nil, restricts results to transactions created before this time (exclusive).
-	CreatedTo *time.Time
-
-	// Provider, when non-empty, restricts results to transactions with this provider (e.g. "xendit", "manual_transfer").
-	Provider string
+	CreatedTo   *time.Time
+	Provider    string
 }
 
-// ListByTenant returns transactions for tenantID in reverse-chronological order (newest first).
-// Keyset cursor on (created_at DESC, id DESC) ensures stable, index-friendly pagination.
+// ListByTenant returns payment transactions for tenantID in reverse-chronological order (newest first).
 func (r *TransactionRepository) ListByTenant(ctx context.Context, tenantID int64, p ListParams) ([]*domain.PaymentTransaction, error) {
 	var (
 		args  []any
@@ -273,6 +261,7 @@ func (r *TransactionRepository) ListByTenant(ctx context.Context, tenantID int64
 
 	args = append(args, tenantID)
 	where = append(where, fmt.Sprintf("tenant_id = $%d", len(args)))
+	where = append(where, "type = 'payment'")
 
 	if len(p.Status) > 0 {
 		statuses := make([]string, len(p.Status))
@@ -305,7 +294,7 @@ func (r *TransactionRepository) ListByTenant(ctx context.Context, tenantID int64
 
 	args = append(args, p.Limit)
 	q := fmt.Sprintf(
-		`SELECT %s FROM payment_transactions WHERE %s ORDER BY created_at DESC, id DESC LIMIT $%d`,
+		`SELECT %s FROM transactions WHERE %s ORDER BY created_at DESC, id DESC LIMIT $%d`,
 		txnColumns, strings.Join(where, " AND "), len(args),
 	)
 
@@ -317,13 +306,13 @@ func (r *TransactionRepository) ListByTenant(ctx context.Context, tenantID int64
 	return collectTransactions(rows)
 }
 
-// ListExpired returns up to limit transactions past their expiry in awaiting_payment state.
+// ListExpired returns up to limit payment transactions past their expiry in awaiting_payment state.
 // Uses SKIP LOCKED so parallel job workers don't block each other.
 func (r *TransactionRepository) ListExpired(ctx context.Context, limit int) ([]*domain.PaymentTransaction, error) {
 	rows, err := dbFromContext(ctx, r.pool).Query(ctx, `
 		SELECT `+txnColumns+`
-		FROM payment_transactions
-		WHERE status = 'awaiting_payment' AND expires_at < NOW()
+		FROM transactions
+		WHERE type = 'payment' AND status = 'awaiting_payment' AND expires_at < NOW()
 		ORDER BY expires_at
 		LIMIT $1
 		FOR UPDATE SKIP LOCKED`,
@@ -335,14 +324,15 @@ func (r *TransactionRepository) ListExpired(ctx context.Context, limit int) ([]*
 	return collectTransactions(rows)
 }
 
-// ListPaidByProvider returns up to limit paid transactions for the given provider
+// ListPaidByProvider returns up to limit paid payment transactions for the given provider
 // that have a provider_payment_id set and have not yet been settled.
 // Uses SKIP LOCKED so parallel job instances don't block each other.
 func (r *TransactionRepository) ListPaidByProvider(ctx context.Context, providerName string, limit int) ([]*domain.PaymentTransaction, error) {
 	rows, err := dbFromContext(ctx, r.pool).Query(ctx, `
 		SELECT `+txnColumns+`
-		FROM payment_transactions
-		WHERE status = 'paid'
+		FROM transactions
+		WHERE type = 'payment'
+		  AND status = 'paid'
 		  AND provider = $1
 		  AND provider_payment_id IS NOT NULL
 		  AND provider_payment_id != ''
@@ -405,7 +395,7 @@ func scanTransaction(row pgx.Row) (*domain.PaymentTransaction, error) {
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, domain.ErrNotFound{Entity: "payment_transaction", ID: idStr}
+			return nil, domain.ErrNotFound{Entity: "transaction", ID: idStr}
 		}
 		return nil, fmt.Errorf("scan transaction: %w", err)
 	}

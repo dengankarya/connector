@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// LedgerRepository manages payment_ledger_entries rows.
+// LedgerRepository manages ledger_entries rows.
 // Entries are append-only — no Update or Delete methods are provided by design.
 type LedgerRepository struct {
 	pool *pgxpool.Pool
@@ -42,7 +42,7 @@ func (r *LedgerRepository) CreateEntries(ctx context.Context, entries []domain.L
 		}
 
 		q := `
-			INSERT INTO payment_ledger_entries (
+			INSERT INTO ledger_entries (
 				id, tenant_id, transaction_id, webhook_event_id,
 				account_type, direction, amount, currency,
 				reference_id, description, metadata,
@@ -85,7 +85,7 @@ func (r *LedgerRepository) GetByTransactionID(ctx context.Context, txID uuid.UUI
 			reference_id, description,
 			metadata,
 			created_at
-		FROM payment_ledger_entries
+		FROM ledger_entries
 		WHERE transaction_id = $1
 		ORDER BY created_at`, txID)
 	if err != nil {
@@ -132,7 +132,7 @@ func (r *LedgerRepository) SumByAccountType(ctx context.Context, tenantID int64,
 		SELECT COALESCE(
 			SUM(CASE direction WHEN 'credit' THEN amount ELSE -amount END), 0
 		)
-		FROM payment_ledger_entries
+		FROM ledger_entries
 		WHERE tenant_id = $1 AND account_type = $2`,
 		tenantID, string(accountType)).Scan(&sum)
 	if err != nil {

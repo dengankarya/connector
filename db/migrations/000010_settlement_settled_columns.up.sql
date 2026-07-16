@@ -1,6 +1,0 @@
-ALTER TABLE merchant_settlement_snapshots
-    ADD COLUMN IF NOT EXISTS settled_balance      BIGINT NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS settled_platform_fee BIGINT NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS settled_xendit_fee   BIGINT NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS settled_vat          BIGINT NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS settled_withholding  BIGINT NOT NULL DEFAULT 0;

@@ -116,38 +116,34 @@ type ShippingTopup struct {
 	CreatedAt string `json:"created_at"`
 }
 
-// AdminTransaction is a simplified payment transaction view for the admin panel.
+// AdminTransaction is a unified view of any financial event in the transactions table.
 type AdminTransaction struct {
-	ID             uuid.UUID  `json:"id"`
-	TenantID       int64      `json:"tenant_id"`
-	OrderNumber    string     `json:"order_number,omitempty"`
-	Provider       string     `json:"provider"`
-	Amount         int64      `json:"amount"`
-	Currency       string     `json:"currency"`
-	PlatformFee    int64      `json:"platform_fee"`
-	MerchantAmount int64      `json:"merchant_amount"`
-	Status         string     `json:"status"`
-	PaymentMethod  string     `json:"payment_method,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	PaidAt         *time.Time `json:"paid_at,omitempty"`
-}
-
-// AdminPayout is a simplified payout view for the admin panel.
-type AdminPayout struct {
-	ID            uuid.UUID  `json:"id"`
-	TenantID      int64      `json:"tenant_id"`
-	Provider      string     `json:"provider"`
-	Amount        int64      `json:"amount"`
-	Currency      string     `json:"currency"`
-	Status        string     `json:"status"`
+	ID          uuid.UUID  `json:"id"`
+	TenantID    int64      `json:"tenant_id"`
+	Type        string     `json:"type"`
+	Amount      int64      `json:"amount"`
+	Currency    string     `json:"currency"`
+	Description string     `json:"description,omitempty"`
+	Status      string     `json:"status"`
+	// Payment-specific (absent for other types)
+	OrderNumber   string     `json:"order_number,omitempty"`
+	Provider      string     `json:"provider,omitempty"`
+	PaymentMethod string     `json:"payment_method,omitempty"`
+	PlatformFee   int64      `json:"platform_fee,omitempty"`
+	MerchantAmount int64     `json:"merchant_amount,omitempty"`
+	PaidAt        *time.Time `json:"paid_at,omitempty"`
+	// Payout-specific (absent for other types)
 	BankCode      string     `json:"bank_code,omitempty"`
 	AccountNumber string     `json:"account_number,omitempty"`
 	AccountName   string     `json:"account_name,omitempty"`
-	Description   string     `json:"description,omitempty"`
 	FailureReason string     `json:"failure_reason,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
 	ProcessedAt   *time.Time `json:"processed_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	MerchantName  string     `json:"merchant_name,omitempty"`
 }
+
+// AdminPayout is an alias for the payout view; the payouts page still uses AdminPayout.
+type AdminPayout = AdminTransaction
 
 // AdminPayoutFilter controls optional filters on cross-tenant payout listing.
 type AdminPayoutFilter struct {
@@ -161,17 +157,12 @@ var ValidPayoutStatuses = map[string]bool{
 	"failed": true, "cancelled": true,
 }
 
-// AdminTxnFilter controls cross-tenant transaction listing.
+// AdminTxnFilter controls cross-tenant transaction listing with offset pagination.
 type AdminTxnFilter struct {
 	TenantID *int64
 	From     *time.Time
 	To       *time.Time
 	Limit    int
-	Cursor   string
-}
-
-// TxnCursorPoint is the (created_at, id) keyset used for cursor pagination on transactions.
-type TxnCursorPoint struct {
-	CreatedAt time.Time
-	ID        uuid.UUID
+	Offset   int
+	Type     string
 }

@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// PayoutRepository manages payment_payouts rows.
+// PayoutRepository manages payout rows in the unified transactions table.
 type PayoutRepository struct {
 	pool *pgxpool.Pool
 }
@@ -32,22 +32,22 @@ func (r *PayoutRepository) Create(ctx context.Context, p *domain.Payout) error {
 	p.UpdatedAt = now
 
 	q := `
-		INSERT INTO payment_payouts (
-			id, tenant_id, provider, provider_payout_id,
+		INSERT INTO transactions (
+			id, tenant_id, type,
 			amount, currency, status,
 			bank_code, account_number, account_name,
 			description, retry_count, max_retries,
-			scheduled_at, created_at, updated_at
+			scheduled_at, version, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4,
-			$5, $6, $7,
-			$8, $9, $10,
-			$11, $12, $13,
-			$14, $15, $16
+			$1, $2, 'payout',
+			$3, $4, $5,
+			$6, $7, $8,
+			$9, $10, $11,
+			$12, 1, $13, $14
 		)`
 
 	_, err := dbFromContext(ctx, r.pool).Exec(ctx, q,
-		p.ID, p.TenantID, p.Provider, nilIfEmpty(p.ProviderPayoutID),
+		p.ID, p.TenantID,
 		p.Amount, p.Currency, string(p.Status),
 		nilIfEmpty(p.BankCode), nilIfEmpty(p.AccountNumber), nilIfEmpty(p.AccountName),
 		nilIfEmpty(p.Description), p.RetryCount, p.MaxRetries,
@@ -62,7 +62,7 @@ func (r *PayoutRepository) Create(ctx context.Context, p *domain.Payout) error {
 // GetByIDForUpdate fetches a payout with SELECT FOR UPDATE.
 func (r *PayoutRepository) GetByIDForUpdate(ctx context.Context, id uuid.UUID) (*domain.Payout, error) {
 	row := dbFromContext(ctx, r.pool).QueryRow(ctx,
-		`SELECT `+payoutColumns+` FROM payment_payouts WHERE id = $1 FOR UPDATE`, id)
+		`SELECT `+payoutColumns+` FROM transactions WHERE id = $1 AND type = 'payout' FOR UPDATE`, id)
 	return scanPayout(row)
 }
 
@@ -71,17 +71,15 @@ func (r *PayoutRepository) Update(ctx context.Context, p *domain.Payout) error {
 	p.UpdatedAt = time.Now().UTC()
 
 	q := `
-		UPDATE payment_payouts SET
-			provider_payout_id = $1,
-			status             = $2,
-			failure_reason     = $3,
-			retry_count        = $4,
-			processed_at       = $5,
-			updated_at         = $6
-		WHERE id = $7`
+		UPDATE transactions SET
+			status         = $1,
+			failure_reason = $2,
+			retry_count    = $3,
+			processed_at   = $4,
+			updated_at     = $5
+		WHERE id = $6 AND type = 'payout'`
 
 	_, err := dbFromContext(ctx, r.pool).Exec(ctx, q,
-		nilIfEmpty(p.ProviderPayoutID),
 		string(p.Status),
 		nilIfEmpty(p.FailureReason),
 		p.RetryCount,
@@ -99,8 +97,9 @@ func (r *PayoutRepository) Update(ctx context.Context, p *domain.Payout) error {
 func (r *PayoutRepository) ListPending(ctx context.Context, limit int) ([]*domain.Payout, error) {
 	rows, err := dbFromContext(ctx, r.pool).Query(ctx, `
 		SELECT `+payoutColumns+`
-		FROM payment_payouts
-		WHERE status = 'pending'
+		FROM transactions
+		WHERE type = 'payout'
+		  AND status = 'pending'
 		  AND (scheduled_at IS NULL OR scheduled_at <= NOW())
 		ORDER BY created_at
 		LIMIT $1
@@ -116,8 +115,8 @@ func (r *PayoutRepository) ListPending(ctx context.Context, limit int) ([]*domai
 func (r *PayoutRepository) ListByTenant(ctx context.Context, tenantID int64, limit, offset int) ([]*domain.Payout, error) {
 	rows, err := dbFromContext(ctx, r.pool).Query(ctx, `
 		SELECT `+payoutColumns+`
-		FROM payment_payouts
-		WHERE tenant_id = $1
+		FROM transactions
+		WHERE tenant_id = $1 AND type = 'payout'
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3`, tenantID, limit, offset)
 	if err != nil {
@@ -130,8 +129,7 @@ func (r *PayoutRepository) ListByTenant(ctx context.Context, tenantID int64, lim
 // ─── column list & scanners ───────────────────────────────────────────────────
 
 const payoutColumns = `
-	id::text, tenant_id, provider,
-	COALESCE(provider_payout_id, ''),
+	id::text, tenant_id,
 	amount, currency, status,
 	COALESCE(bank_code, ''),
 	COALESCE(account_number, ''),
@@ -149,8 +147,7 @@ func scanPayout(row pgx.Row) (*domain.Payout, error) {
 		scheduledAt, processedAt *time.Time
 	)
 	err := row.Scan(
-		&idStr, &p.TenantID, &p.Provider,
-		&p.ProviderPayoutID,
+		&idStr, &p.TenantID,
 		&p.Amount, &p.Currency, &status,
 		&p.BankCode,
 		&p.AccountNumber,

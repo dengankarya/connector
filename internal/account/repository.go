@@ -40,25 +40,24 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 
 // ─── Payout requests ─────────────────────────────────────────────────────────
 
-// InsertPayoutRequest creates a pending payout withdrawal record in payment_payouts.
-// Provider is set to "manual" because platform operators process disbursements manually.
+// InsertPayoutRequest creates a pending payout withdrawal record in the unified transactions table.
 func (r *Repository) InsertPayoutRequest(ctx context.Context, req *PayoutRequest) error {
 	req.ID = uuid.New()
 	req.Status = "pending"
 	req.CreatedAt = time.Now().UTC()
 
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO payment_payouts (
-			id, tenant_id, provider, amount, currency, status,
-			bank_code, account_number, account_name, description,
-			retry_count, max_retries, created_at, updated_at
+		INSERT INTO transactions (
+			id, tenant_id, type, amount, currency, description, status,
+			bank_code, account_number, account_name,
+			retry_count, max_retries, version, created_at, updated_at
 		) VALUES (
-			$1, $2, 'manual', $3, $4, 'pending',
-			$5, $6, $7, $8,
-			0, 0, $9, $9
+			$1, $2, 'payout', $3, $4, $5, 'pending',
+			$6, $7, $8,
+			0, 0, 1, $9, $9
 		)`,
-		req.ID, req.TenantID, req.Amount, req.Currency,
-		req.BankCode, req.AccountNumber, req.AccountName, req.Description,
+		req.ID, req.TenantID, req.Amount, req.Currency, req.Description,
+		req.BankCode, req.AccountNumber, req.AccountName,
 		req.CreatedAt,
 	)
 	return err
@@ -75,30 +74,26 @@ type ActivityCursorPoint struct {
 
 // ActivityListParams controls cursor-paginated listing of account activity.
 type ActivityListParams struct {
-	// Limit is the maximum number of rows to return. Pass (pageSize+1) to detect has_more.
-	Limit int
-	// Cursor, when non-nil, returns rows that sort after this point (older records in DESC order).
+	Limit  int
 	Cursor *ActivityCursorPoint
-	// Types restricts results to the given activity types; empty means all types.
-	Types []ActivityType
-	// From restricts to rows created at or after this time (inclusive).
-	From *time.Time
-	// To restricts to rows created before this time (exclusive).
-	To *time.Time
+	Types  []ActivityType
+	From   *time.Time
+	To     *time.Time
 }
 
-// ListActivity returns account activity for a tenant, newest first, with optional
-// cursor pagination, type filtering, and date range filtering.
+// ListActivity returns account activity for a tenant, newest first.
+// All financial events now come from the unified transactions table.
+// Payouts and manual_transfer payments are excluded from this feed.
 func (r *Repository) ListActivity(ctx context.Context, tenantID int64, p ActivityListParams) ([]*ActivityItem, error) {
-	// All dynamic predicates go on the outer query so they apply uniformly
-	// across the three source tables after the UNION ALL is resolved.
 	var (
 		args       []any
 		outerWhere []string
 	)
-	args = append(args, tenantID) // $1 — used by all three inner queries
+	args = append(args, tenantID) // $1
 
 	if len(p.Types) > 0 {
+		// Map external ActivityType values back to DB type + status pairs.
+		// The outer WHERE uses the computed "type" alias from the subquery.
 		typeStrs := make([]string, len(p.Types))
 		for i, t := range p.Types {
 			typeStrs[i] = string(t)
@@ -127,72 +122,34 @@ func (r *Repository) ListActivity(ctx context.Context, tenantID int64, p Activit
 		outerWhereClause = "WHERE " + strings.Join(outerWhere, " AND ")
 	}
 
+	// The subquery maps DB type+status to the legacy ActivityType strings
+	// so the merchant-facing API response is backward compatible.
 	q := fmt.Sprintf(`
 		SELECT id, type, amount, currency, order_number, status, note, created_at FROM (
-
-			-- Full payment transactions (customer orders); manual_transfer excluded —
-			-- those funds never passed through the platform and would inflate the balance.
 			SELECT
-				id::text                      AS id,
-				'payment'                     AS type,
+				id::text AS id,
+				CASE type
+					WHEN 'shipping_hold' THEN
+						CASE status
+							WHEN 'holding'   THEN 'shipment_hold'
+							WHEN 'confirmed' THEN 'shipment_confirmed'
+							WHEN 'released'  THEN 'shipment_released'
+							ELSE 'shipment_hold'
+						END
+					WHEN 'shipping_topup'      THEN 'balance_topup'
+					WHEN 'shipping_adjustment' THEN 'shipment_price_adjustment'
+					ELSE type  -- 'payment'
+				END AS type,
 				amount,
 				currency,
-				COALESCE(order_number, '')    AS order_number,
-				status::text                  AS status,
-				''                            AS note,
+				COALESCE(order_number, '') AS order_number,
+				COALESCE(status, '')       AS status,
+				COALESCE(description, '') AS note,
 				created_at
-			FROM payment_transactions
-			WHERE tenant_id = $1 AND provider != 'manual_transfer'
-
-			UNION ALL
-
-			-- Manual top-ups by the platform operator
-			SELECT
-				id::text                  AS id,
-				'balance_topup'           AS type,
-				amount,
-				currency,
-				''                        AS order_number,
-				''                        AS status,
-				COALESCE(note, '')        AS note,
-				created_at
-			FROM shipping_topups
+			FROM transactions
 			WHERE tenant_id = $1
-
-			UNION ALL
-
-			-- Shipping holds (type reflects current hold status)
-			SELECT
-				id::text                  AS id,
-				CASE status
-					WHEN 'holding'   THEN 'shipment_hold'
-					WHEN 'confirmed' THEN 'shipment_confirmed'
-					WHEN 'released'  THEN 'shipment_released'
-				END                       AS type,
-				amount,
-				currency,
-				order_number,
-				status::text              AS status,
-				''                        AS note,
-				created_at
-			FROM shipping_holds
-			WHERE tenant_id = $1
-
-			UNION ALL
-
-			-- Shipping price corrections (positive diff = debit, negative = credit)
-			SELECT
-				id::text                         AS id,
-				'shipment_price_adjustment'      AS type,
-				diff                             AS amount,
-				currency,
-				order_number,
-				''                               AS status,
-				''                               AS note,
-				created_at
-			FROM shipping_price_adjustments
-			WHERE tenant_id = $1
-
+			  AND type != 'payout'
+			  AND NOT (type = 'payment' AND provider = 'manual_transfer')
 		) activity
 		%s
 		ORDER BY created_at DESC, id DESC
@@ -225,7 +182,7 @@ func (r *Repository) ListActivity(ctx context.Context, tenantID int64, p Activit
 }
 
 // GetDetailByID returns the full detail for one activity item.
-// For payment items, ledger entries from payment_ledger_entries are included.
+// For payment items, ledger entries from ledger_entries are included.
 func (r *Repository) GetDetailByID(ctx context.Context, tenantID int64, id uuid.UUID, activityType ActivityType) (*ActivityDetail, error) {
 	db := dbFromContext(ctx, r.pool)
 
@@ -236,10 +193,10 @@ func (r *Repository) GetDetailByID(ctx context.Context, tenantID int64, id uuid.
 	switch activityType {
 	case ActivityPayment:
 		row := db.QueryRow(ctx, `
-			SELECT amount, currency, COALESCE(order_number, ''), status::text,
+			SELECT amount, currency, COALESCE(order_number, ''), status,
 			       COALESCE(metadata, '{}'), created_at
-			FROM payment_transactions
-			WHERE id = $1 AND tenant_id = $2`,
+			FROM transactions
+			WHERE id = $1 AND tenant_id = $2 AND type = 'payment'`,
 			id, tenantID)
 		if err := row.Scan(&item.Amount, &item.Currency, &item.OrderNumber, &item.Status,
 			&metadata, &item.CreatedAt); err != nil {
@@ -251,9 +208,9 @@ func (r *Repository) GetDetailByID(ctx context.Context, tenantID int64, id uuid.
 
 	case ActivityBalanceTopup:
 		row := db.QueryRow(ctx, `
-			SELECT amount, currency, COALESCE(note, ''), created_at
-			FROM shipping_topups
-			WHERE id = $1 AND tenant_id = $2`,
+			SELECT amount, currency, COALESCE(description, ''), created_at
+			FROM transactions
+			WHERE id = $1 AND tenant_id = $2 AND type = 'shipping_topup'`,
 			id, tenantID)
 		if err := row.Scan(&item.Amount, &item.Currency, &item.Note, &item.CreatedAt); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -264,9 +221,9 @@ func (r *Repository) GetDetailByID(ctx context.Context, tenantID int64, id uuid.
 
 	case ActivityShipmentHold, ActivityShipmentConfirmed, ActivityShipmentReleased:
 		row := db.QueryRow(ctx, `
-			SELECT amount, currency, order_number, status::text, created_at
-			FROM shipping_holds
-			WHERE id = $1 AND tenant_id = $2`,
+			SELECT amount, currency, COALESCE(order_number, ''), status, created_at
+			FROM transactions
+			WHERE id = $1 AND tenant_id = $2 AND type = 'shipping_hold'`,
 			id, tenantID)
 		if err := row.Scan(&item.Amount, &item.Currency, &item.OrderNumber, &item.Status, &item.CreatedAt); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -278,9 +235,9 @@ func (r *Repository) GetDetailByID(ctx context.Context, tenantID int64, id uuid.
 	case ActivityShipmentPriceAdjustment:
 		var adj ShippingPriceAdjustment
 		row := db.QueryRow(ctx, `
-			SELECT diff, currency, order_number, old_price, new_price, created_at
-			FROM shipping_price_adjustments
-			WHERE id = $1 AND tenant_id = $2`,
+			SELECT amount, currency, COALESCE(order_number, ''), old_price, new_price, created_at
+			FROM transactions
+			WHERE id = $1 AND tenant_id = $2 AND type = 'shipping_adjustment'`,
 			id, tenantID)
 		if err := row.Scan(&adj.Diff, &adj.Currency, &adj.OrderNumber, &adj.OldPrice, &adj.NewPrice, &adj.CreatedAt); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -308,7 +265,7 @@ func (r *Repository) GetDetailByID(ctx context.Context, tenantID int64, id uuid.
 	if activityType == ActivityPayment {
 		rows, err := db.Query(ctx, `
 			SELECT account_type, direction, amount, currency, description, created_at
-			FROM payment_ledger_entries
+			FROM ledger_entries
 			WHERE transaction_id = $1
 			ORDER BY created_at`,
 			id)
@@ -334,7 +291,6 @@ func (r *Repository) GetDetailByID(ctx context.Context, tenantID int64, id uuid.
 // ─── Payment balance ──────────────────────────────────────────────────────────
 
 // GetPaymentBalance computes the merchant's transaction-derived payment balance.
-// Settled and pending figures come from payment_transactions; paid_out from payment_payouts.
 func (r *Repository) GetPaymentBalance(ctx context.Context, tenantID int64) (*MerchantPaymentBalance, error) {
 	db := dbFromContext(ctx, r.pool)
 
@@ -343,8 +299,9 @@ func (r *Repository) GetPaymentBalance(ctx context.Context, tenantID int64) (*Me
 		SELECT
 			COALESCE(SUM(merchant_amount) FILTER (WHERE status = 'settled'), 0),
 			COALESCE(SUM(merchant_amount) FILTER (WHERE status = 'paid'), 0)
-		FROM payment_transactions
-		WHERE tenant_id = $1 AND provider != 'manual_transfer'`, tenantID).Scan(&settled, &pending)
+		FROM transactions
+		WHERE tenant_id = $1 AND type = 'payment' AND provider != 'manual_transfer'`, tenantID).
+		Scan(&settled, &pending)
 	if err != nil {
 		return nil, fmt.Errorf("get payment balance for tenant %d: %w", tenantID, err)
 	}
@@ -352,8 +309,9 @@ func (r *Repository) GetPaymentBalance(ctx context.Context, tenantID int64) (*Me
 	var paidOut int64
 	err = db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(amount), 0)
-		FROM payment_payouts
-		WHERE tenant_id = $1 AND status = 'completed'`, tenantID).Scan(&paidOut)
+		FROM transactions
+		WHERE tenant_id = $1 AND type = 'payout' AND status = 'completed'`, tenantID).
+		Scan(&paidOut)
 	if err != nil {
 		return nil, fmt.Errorf("get paid out for tenant %d: %w", tenantID, err)
 	}
@@ -470,8 +428,8 @@ func (r *Repository) CreateHold(ctx context.Context, h *ShippingHold) error {
 	h.Status = HoldStatusHolding
 
 	_, err := dbFromContext(ctx, r.pool).Exec(ctx, `
-		INSERT INTO shipping_holds (id, tenant_id, order_number, amount, currency, status, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		INSERT INTO transactions (id, tenant_id, type, order_number, amount, currency, status, version, created_at, updated_at)
+		VALUES ($1, $2, 'shipping_hold', $3, $4, $5, $6, 1, $7, $7)`,
 		h.ID, h.TenantID, h.OrderNumber, h.Amount, h.Currency, string(h.Status), h.CreatedAt)
 	if err != nil {
 		if isDuplicateKeyError(err) {
@@ -483,8 +441,7 @@ func (r *Repository) CreateHold(ctx context.Context, h *ShippingHold) error {
 }
 
 // InsertHold inserts a fully-populated ShippingHold, preserving the provided status,
-// confirmed_at, and released_at. Use this when the hold is created already in a terminal
-// state (e.g., direct deduction without a prior hold reservation).
+// confirmed_at, and released_at.
 func (r *Repository) InsertHold(ctx context.Context, h *ShippingHold) error {
 	if h.ID == uuid.Nil {
 		h.ID = uuid.New()
@@ -493,8 +450,8 @@ func (r *Repository) InsertHold(ctx context.Context, h *ShippingHold) error {
 		h.CreatedAt = time.Now().UTC()
 	}
 	_, err := dbFromContext(ctx, r.pool).Exec(ctx, `
-		INSERT INTO shipping_holds (id, tenant_id, order_number, amount, currency, status, created_at, confirmed_at, released_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		INSERT INTO transactions (id, tenant_id, type, order_number, amount, currency, status, version, created_at, updated_at, confirmed_at, released_at)
+		VALUES ($1, $2, 'shipping_hold', $3, $4, $5, $6, 1, $7, $7, $8, $9)`,
 		h.ID, h.TenantID, h.OrderNumber, h.Amount, h.Currency, string(h.Status), h.CreatedAt, h.ConfirmedAt, h.ReleasedAt)
 	if err != nil {
 		if isDuplicateKeyError(err) {
@@ -509,18 +466,17 @@ func (r *Repository) GetHoldByID(ctx context.Context, id uuid.UUID) (*ShippingHo
 	row := dbFromContext(ctx, r.pool).QueryRow(ctx, `
 		SELECT id::text, tenant_id, order_number, amount, currency, status,
 		       created_at, confirmed_at, released_at
-		FROM shipping_holds WHERE id = $1`, id)
+		FROM transactions WHERE id = $1 AND type = 'shipping_hold'`, id)
 	return scanHold(row)
 }
 
 // GetHoldByOrderNumber returns the active (holding) hold for the given tenant and order number.
-// Returns ErrHoldNotFound when no active hold exists for that order.
 func (r *Repository) GetHoldByOrderNumber(ctx context.Context, tenantID int64, orderNumber string) (*ShippingHold, error) {
 	row := dbFromContext(ctx, r.pool).QueryRow(ctx, `
 		SELECT id::text, tenant_id, order_number, amount, currency, status,
 		       created_at, confirmed_at, released_at
-		FROM shipping_holds
-		WHERE tenant_id = $1 AND order_number = $2 AND status = 'holding'
+		FROM transactions
+		WHERE tenant_id = $1 AND order_number = $2 AND type = 'shipping_hold' AND status = 'holding'
 		LIMIT 1`, tenantID, orderNumber)
 	return scanHold(row)
 }
@@ -529,9 +485,9 @@ func (r *Repository) UpdateHoldStatus(ctx context.Context, id uuid.UUID, status 
 	var q string
 	switch status {
 	case HoldStatusConfirmed:
-		q = `UPDATE shipping_holds SET status = $2, confirmed_at = $3 WHERE id = $1`
+		q = `UPDATE transactions SET status = $2, confirmed_at = $3, updated_at = $3 WHERE id = $1 AND type = 'shipping_hold'`
 	case HoldStatusReleased:
-		q = `UPDATE shipping_holds SET status = $2, released_at = $3 WHERE id = $1`
+		q = `UPDATE transactions SET status = $2, released_at = $3, updated_at = $3 WHERE id = $1 AND type = 'shipping_hold'`
 	default:
 		return fmt.Errorf("unsupported hold status: %s", status)
 	}
@@ -549,8 +505,8 @@ func (r *Repository) ListHolds(ctx context.Context, tenantID int64) ([]*Shipping
 	rows, err := dbFromContext(ctx, r.pool).Query(ctx, `
 		SELECT id::text, tenant_id, order_number, amount, currency, status,
 		       created_at, confirmed_at, released_at
-		FROM shipping_holds
-		WHERE tenant_id = $1
+		FROM transactions
+		WHERE tenant_id = $1 AND type = 'shipping_hold'
 		ORDER BY created_at DESC`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list holds: %w", err)
@@ -594,6 +550,7 @@ func scanHold(row pgx.Row) (*ShippingHold, error) {
 // ─── Price adjustments ────────────────────────────────────────────────────────
 
 // CreatePriceAdjustment inserts an audit row for a shipping price correction.
+// amount (diff) can be negative when actual weight was less than estimated.
 func (r *Repository) CreatePriceAdjustment(ctx context.Context, adj *ShippingPriceAdjustment) error {
 	if adj.ID == uuid.Nil {
 		adj.ID = uuid.New()
@@ -601,10 +558,10 @@ func (r *Repository) CreatePriceAdjustment(ctx context.Context, adj *ShippingPri
 	adj.CreatedAt = time.Now().UTC()
 
 	_, err := dbFromContext(ctx, r.pool).Exec(ctx, `
-		INSERT INTO shipping_price_adjustments
-		    (id, tenant_id, order_number, old_price, new_price, diff, currency, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		adj.ID, adj.TenantID, adj.OrderNumber, adj.OldPrice, adj.NewPrice, adj.Diff, adj.Currency, adj.CreatedAt)
+		INSERT INTO transactions
+		    (id, tenant_id, type, order_number, amount, currency, old_price, new_price, status, version, created_at, updated_at)
+		VALUES ($1, $2, 'shipping_adjustment', $3, $4, $5, $6, $7, 'completed', 1, $8, $8)`,
+		adj.ID, adj.TenantID, adj.OrderNumber, adj.Diff, adj.Currency, adj.OldPrice, adj.NewPrice, adj.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("insert shipping_price_adjustment: %w", err)
 	}
@@ -637,7 +594,6 @@ func (r *Repository) CreateGatewayAccount(ctx context.Context, a *GatewayAccount
 }
 
 // GetGatewayAccountByTenantID returns the gateway sub-account for the given tenant and gateway name.
-// Returns ErrGatewayAccountNotFound when no account exists.
 func (r *Repository) GetGatewayAccountByTenantID(ctx context.Context, tenantID int64, gateway string) (*GatewayAccount, error) {
 	row := dbFromContext(ctx, r.pool).QueryRow(ctx, `
 		SELECT id::text, tenant_id, gateway, gateway_account_id, email, name, status, created_at, updated_at
@@ -656,8 +612,7 @@ func (r *Repository) GetGatewayAccountByTenantID(ctx context.Context, tenantID i
 	return &a, nil
 }
 
-// UpdateSubAccountStatusByGatewayID updates the status of a gateway sub-account identified
-// by its provider-side gateway_account_id (= Xendit user_id / account id).
+// UpdateSubAccountStatusByGatewayID updates the status of a gateway sub-account.
 func (r *Repository) UpdateSubAccountStatusByGatewayID(ctx context.Context, gateway, gatewayAccountID, status string) error {
 	_, err := dbFromContext(ctx, r.pool).Exec(ctx, `
 		UPDATE merchant_gateway_accounts
@@ -676,8 +631,8 @@ func (r *Repository) CreateTopup(ctx context.Context, t *ShippingTopup) error {
 	t.CreatedAt = time.Now().UTC()
 
 	_, err := dbFromContext(ctx, r.pool).Exec(ctx, `
-		INSERT INTO shipping_topups (id, tenant_id, amount, currency, note, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
+		INSERT INTO transactions (id, tenant_id, type, amount, currency, description, status, version, created_at, updated_at)
+		VALUES ($1, $2, 'shipping_topup', $3, $4, $5, 'completed', 1, $6, $6)`,
 		t.ID, t.TenantID, t.Amount, t.Currency, nilIfEmpty(t.Note), t.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("insert shipping_topup: %w", err)
@@ -687,9 +642,9 @@ func (r *Repository) CreateTopup(ctx context.Context, t *ShippingTopup) error {
 
 func (r *Repository) ListTopups(ctx context.Context, tenantID int64) ([]*ShippingTopup, error) {
 	rows, err := dbFromContext(ctx, r.pool).Query(ctx, `
-		SELECT id::text, tenant_id, amount, currency, COALESCE(note, ''), created_at
-		FROM shipping_topups
-		WHERE tenant_id = $1
+		SELECT id::text, tenant_id, amount, currency, COALESCE(description, ''), created_at
+		FROM transactions
+		WHERE tenant_id = $1 AND type = 'shipping_topup'
 		ORDER BY created_at DESC`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list topups: %w", err)

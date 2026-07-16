@@ -1,3 +1,0 @@
--- Postgres does not support removing values from an enum type.
--- To roll back, recreate the enum without the added values and update all references.
--- This is intentionally a no-op; remove the values manually if truly needed.

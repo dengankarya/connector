@@ -97,22 +97,23 @@ func (ctrl *controller) login(c fiber.Ctx) error {
 // listTransactions godoc
 //
 //	@Summary		List all transactions (admin)
-//	@Description	Returns cross-tenant transactions, newest first. Filter by tenant_id, date range, and cursor pagination.
+//	@Description	Returns cross-tenant transactions of any type, newest first. Filter by tenant_id, type, date range, and offset pagination.
 //	@Tags			Admin
 //	@Produce		json
-//	@Param			tenant_id	query		int64																	false	"Filter by tenant ID"
-//	@Param			date_from	query		string																	false	"Start of date range (RFC3339)"
-//	@Param			date_to		query		string																	false	"End of date range (RFC3339)"
-//	@Param			cursor		query		string																	false	"Pagination cursor from previous response"
-//	@Param			limit		query		int																		false	"Page size (default 20, max 100)"
-//	@Success		200			{object}	common.Response{data=common.PaginationResponse[admin.AdminTransaction]}	"Transaction list"
-//	@Failure		400			{object}	common.Response															"Invalid query params"
-//	@Failure		401			{object}	common.Response															"Unauthorized"
-//	@Failure		403			{object}	common.Response															"Forbidden"
-//	@Failure		500			{object}	common.Response															"Internal server error"
+//	@Param			tenant_id	query		int64									false	"Filter by tenant ID"
+//	@Param			type		query		string									false	"Filter by type (payment, shipping_topup, payout, shipping_hold, shipping_adjustment)"
+//	@Param			date_from	query		string									false	"Start of date range (RFC3339)"
+//	@Param			date_to		query		string									false	"End of date range (RFC3339)"
+//	@Param			limit		query		int										false	"Page size (default 20, max 100)"
+//	@Param			offset		query		int										false	"Pagination offset (default 0)"
+//	@Success		200			{object}	common.Response{data=[]admin.AdminTransaction}	"Transaction list"
+//	@Failure		400			{object}	common.Response								"Invalid query params"
+//	@Failure		401			{object}	common.Response								"Unauthorized"
+//	@Failure		403			{object}	common.Response								"Forbidden"
+//	@Failure		500			{object}	common.Response								"Internal server error"
 //	@Router			/admin/transactions [get]
 func (ctrl *controller) listTransactions(c fiber.Ctx) error {
-	filter := AdminTxnFilter{Cursor: c.Query("cursor")}
+	var filter AdminTxnFilter
 
 	if limitStr := c.Query("limit"); limitStr != "" {
 		n, err := strconv.Atoi(limitStr)
@@ -122,12 +123,24 @@ func (ctrl *controller) listTransactions(c fiber.Ctx) error {
 		filter.Limit = n
 	}
 
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		n, err := strconv.Atoi(offsetStr)
+		if err != nil || n < 0 {
+			return badRequest(c, "offset must be a non-negative integer")
+		}
+		filter.Offset = n
+	}
+
 	if tidStr := c.Query("tenant_id"); tidStr != "" {
 		tid, err := strconv.ParseInt(tidStr, 10, 64)
 		if err != nil || tid <= 0 {
 			return badRequest(c, "tenant_id must be a positive integer")
 		}
 		filter.TenantID = &tid
+	}
+
+	if t := c.Query("type"); t != "" {
+		filter.Type = t
 	}
 
 	if fromStr := c.Query("date_from"); fromStr != "" {
@@ -148,9 +161,6 @@ func (ctrl *controller) listTransactions(c fiber.Ctx) error {
 
 	result, err := ctrl.svc.ListTransactions(c.Context(), filter)
 	if err != nil {
-		if isDomainErr(err, "BR_") {
-			return badRequest(c, err.Error())
-		}
 		return internalError(c, err)
 	}
 	return c.JSON(common.Response{Status: "OK", Data: result})
