@@ -556,13 +556,23 @@ func scanAdminPayout(row pgx.Row) (*AdminPayout, error) {
 	return &p, nil
 }
 
-// ListPayouts returns all payouts across all tenants, newest first, with offset pagination.
-func (r *Repository) ListPayouts(ctx context.Context, limit, offset int) ([]*AdminPayout, error) {
-	rows, err := dbFromContext(ctx, r.pool).Query(ctx, `
-		SELECT `+adminPayoutColumns+`
-		FROM payment_payouts
-		ORDER BY created_at DESC
-		LIMIT $1 OFFSET $2`, limit, offset)
+// ListPayouts returns payouts across all tenants, newest first, with optional filters and offset pagination.
+func (r *Repository) ListPayouts(ctx context.Context, limit, offset int, f AdminPayoutFilter) ([]*AdminPayout, error) {
+	args := []any{limit, offset}
+	where := ""
+	if f.TenantID != nil {
+		args = append(args, *f.TenantID)
+		where += fmt.Sprintf(" AND tenant_id = $%d", len(args))
+	}
+	if f.Status != "" {
+		args = append(args, f.Status)
+		where += fmt.Sprintf(" AND status = $%d", len(args))
+	}
+
+	rows, err := dbFromContext(ctx, r.pool).Query(ctx,
+		`SELECT `+adminPayoutColumns+` FROM payment_payouts WHERE true`+where+
+			` ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+		args...)
 	if err != nil {
 		return nil, fmt.Errorf("list admin payouts: %w", err)
 	}

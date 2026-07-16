@@ -185,14 +185,14 @@ func (s *Service) ListTransactions(ctx context.Context, f AdminTxnFilter) (*comm
 
 // ─── Payouts ──────────────────────────────────────────────────────────────────
 
-// ListPayouts returns all payouts across all tenants with offset pagination.
-func (s *Service) ListPayouts(ctx context.Context, limit, offset int) ([]*AdminPayout, error) {
+// ListPayouts returns payouts across all tenants with optional filters and offset pagination.
+func (s *Service) ListPayouts(ctx context.Context, limit, offset int, f AdminPayoutFilter) ([]*AdminPayout, error) {
 	if limit <= 0 {
 		limit = defaultPageSize
 	} else if limit > maxPageSize {
 		limit = maxPageSize
 	}
-	return s.repo.ListPayouts(ctx, limit, offset)
+	return s.repo.ListPayouts(ctx, limit, offset, f)
 }
 
 // ─── Topup ────────────────────────────────────────────────────────────────────

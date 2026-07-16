@@ -188,7 +188,22 @@ func (ctrl *controller) listPayouts(c fiber.Ctx) error {
 		offset = n
 	}
 
-	payouts, err := ctrl.svc.ListPayouts(c.Context(), limit, offset)
+	var f AdminPayoutFilter
+	if s := c.Query("tenant_id"); s != "" {
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err != nil || n <= 0 {
+			return badRequest(c, "tenant_id must be a positive integer")
+		}
+		f.TenantID = &n
+	}
+	if s := c.Query("status"); s != "" {
+		if !ValidPayoutStatuses[s] {
+			return badRequest(c, "invalid status value")
+		}
+		f.Status = s
+	}
+
+	payouts, err := ctrl.svc.ListPayouts(c.Context(), limit, offset, f)
 	if err != nil {
 		return internalError(c, err)
 	}

@@ -149,6 +149,18 @@ type AdminPayout struct {
 	ProcessedAt   *time.Time `json:"processed_at,omitempty"`
 }
 
+// AdminPayoutFilter controls optional filters on cross-tenant payout listing.
+type AdminPayoutFilter struct {
+	TenantID *int64
+	Status   string
+}
+
+// ValidPayoutStatuses is the allowed set of payout status values.
+var ValidPayoutStatuses = map[string]bool{
+	"pending": true, "processing": true, "completed": true,
+	"failed": true, "cancelled": true,
+}
+
 // AdminTxnFilter controls cross-tenant transaction listing.
 type AdminTxnFilter struct {
 	TenantID *int64
