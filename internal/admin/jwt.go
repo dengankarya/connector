@@ -11,19 +11,21 @@ import (
 // AdminClaims are the JWT payload fields for platform admin tokens.
 type AdminClaims struct {
 	jwt.RegisteredClaims
+	Email        string   `json:"email"`
 	IsSuperAdmin bool     `json:"is_super_admin"`
 	Permissions  []string `json:"perms,omitempty"` // format: "resource:ACTION"
 }
 
 // IssueToken signs a 24-hour JWT for adminID using HS256.
 // Super admins receive an empty Permissions slice — IsSuperAdmin: true grants all access.
-func IssueToken(adminID uuid.UUID, isSuperAdmin bool, perms []string, secret string) (string, error) {
+func IssueToken(adminID uuid.UUID, email string, isSuperAdmin bool, perms []string, secret string) (string, error) {
 	claims := AdminClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   adminID.String(),
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
+		Email:        email,
 		IsSuperAdmin: isSuperAdmin,
 		Permissions:  perms,
 	}

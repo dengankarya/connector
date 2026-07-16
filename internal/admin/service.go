@@ -42,7 +42,7 @@ func (s *Service) Login(ctx context.Context, email, password string) (*LoginResp
 	if err != nil {
 		return nil, fmt.Errorf("login: fetch permissions: %w", err)
 	}
-	token, err := IssueToken(user.ID, isSuperAdmin, perms, s.secret)
+	token, err := IssueToken(user.ID, user.Email, isSuperAdmin, perms, s.secret)
 	if err != nil {
 		return nil, fmt.Errorf("login: issue token: %w", err)
 	}
