@@ -14,11 +14,78 @@ var (
 
 // AdminUser is the platform-operator account stored in admin_users.
 type AdminUser struct {
-	ID           uuid.UUID `json:"id"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"-"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           uuid.UUID  `json:"id"`
+	Email        string     `json:"email"`
+	PasswordHash string     `json:"-"`
+	IsSuperAdmin bool       `json:"is_super_admin"`
+	RoleID       *uuid.UUID `json:"role_id,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+// AdminUserSummary is the public view of an admin user (no password hash).
+type AdminUserSummary struct {
+	ID           uuid.UUID  `json:"id"`
+	Email        string     `json:"email"`
+	IsSuperAdmin bool       `json:"is_super_admin"`
+	RoleID       *uuid.UUID `json:"role_id,omitempty"`
+	RoleName     string     `json:"role_name,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+}
+
+// Role is a named set of resource-action permissions.
+type Role struct {
+	ID          uuid.UUID    `json:"id"`
+	Name        string       `json:"name"`
+	Description string       `json:"description,omitempty"`
+	CreatedBy   *uuid.UUID   `json:"created_by,omitempty"`
+	Permissions []Permission `json:"permissions"`
+	CreatedAt   time.Time    `json:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
+}
+
+// Permission is a single resource:action grant within a role.
+type Permission struct {
+	Resource string `json:"resource"`
+	Action   string `json:"action"`
+}
+
+// Valid resource and action values enforced at the API layer.
+var (
+	ValidResources = []string{"transactions", "payouts", "merchants", "kyc"}
+	ValidActions   = []string{"READ", "WRITE", "UPDATE"}
+)
+
+func isValidResource(r string) bool {
+	for _, v := range ValidResources {
+		if v == r {
+			return true
+		}
+	}
+	return false
+}
+
+func isValidAction(a string) bool {
+	for _, v := range ValidActions {
+		if v == a {
+			return true
+		}
+	}
+	return false
+}
+
+// CreateRoleBody is the request body for creating or updating a role.
+type CreateRoleBody struct {
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	Permissions []Permission `json:"permissions"`
+}
+
+// CreateAdminUserBody is the request body for creating a new admin user.
+type CreateAdminUserBody struct {
+	Email    string     `json:"email"`
+	Password string     `json:"password"`
+	RoleID   *uuid.UUID `json:"role_id,omitempty"`
 }
 
 // LoginBody is the request body for POST /admin/auth/login.

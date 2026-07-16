@@ -54,7 +54,7 @@ func adminRequest(cfg *config.Configuration) fiber.Handler {
 }
 
 // adminJWTAuth validates the Bearer token in Authorization header using the admin JWT secret.
-// Sets "admin_id" in fiber.Ctx locals on success.
+// Stores the full *admin.AdminClaims (including permissions) in fiber.Ctx locals under "admin_claims".
 func adminJWTAuth(secret string) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		authHeader := c.Get("Authorization")
@@ -64,13 +64,13 @@ func adminJWTAuth(secret string) fiber.Handler {
 				Status: "Unauthorized", Error: "missing or invalid Authorization header",
 			})
 		}
-		adminID, err := admin.VerifyToken(strings.TrimPrefix(authHeader, prefix), secret)
+		claims, err := admin.VerifyToken(strings.TrimPrefix(authHeader, prefix), secret)
 		if err != nil {
 			return c.Status(http.StatusUnauthorized).JSON(common.Response{
 				Status: "Unauthorized", Error: err.Error(),
 			})
 		}
-		c.Locals("admin_id", adminID)
+		c.Locals("admin_claims", claims)
 		return c.Next()
 	}
 }

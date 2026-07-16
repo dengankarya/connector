@@ -29,7 +29,7 @@ func NewService(repo *Repository, accountSvc *account.Service, secret string, lo
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
-// Login validates credentials and returns a signed JWT.
+// Login validates credentials and returns a signed JWT with the user's permissions embedded.
 func (s *Service) Login(ctx context.Context, email, password string) (*LoginResponse, error) {
 	user, err := s.repo.GetByEmail(ctx, email)
 	if err != nil {
@@ -38,12 +38,89 @@ func (s *Service) Login(ctx context.Context, email, password string) (*LoginResp
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
 		return nil, ErrInvalidCredentials
 	}
-	token, err := IssueToken(user.ID, s.secret)
+	isSuperAdmin, perms, err := s.repo.GetUserPermissions(ctx, user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("login: fetch permissions: %w", err)
+	}
+	token, err := IssueToken(user.ID, isSuperAdmin, perms, s.secret)
 	if err != nil {
 		return nil, fmt.Errorf("login: issue token: %w", err)
 	}
 	s.logger.WithField("admin_id", user.ID).Info("admin login")
 	return &LoginResponse{Token: token}, nil
+}
+
+// ─── Roles ────────────────────────────────────────────────────────────────────
+
+// ListRoles returns all roles with their permissions.
+func (s *Service) ListRoles(ctx context.Context) ([]*Role, error) {
+	return s.repo.ListRoles(ctx)
+}
+
+// CreateRole creates a new role with the given permissions.
+func (s *Service) CreateRole(ctx context.Context, body CreateRoleBody, createdBy uuid.UUID) (*Role, error) {
+	if body.Name == "" {
+		return nil, common.NewDomainError("RB_INVALID", "role name is required")
+	}
+	for _, p := range body.Permissions {
+		if !isValidResource(p.Resource) {
+			return nil, common.NewDomainError("RB_INVALID", "invalid resource: "+p.Resource)
+		}
+		if !isValidAction(p.Action) {
+			return nil, common.NewDomainError("RB_INVALID", "invalid action: "+p.Action)
+		}
+	}
+	return s.repo.CreateRole(ctx, body, createdBy)
+}
+
+// UpdateRole replaces a role's name, description, and permissions.
+func (s *Service) UpdateRole(ctx context.Context, id uuid.UUID, body CreateRoleBody) (*Role, error) {
+	if body.Name == "" {
+		return nil, common.NewDomainError("RB_INVALID", "role name is required")
+	}
+	for _, p := range body.Permissions {
+		if !isValidResource(p.Resource) {
+			return nil, common.NewDomainError("RB_INVALID", "invalid resource: "+p.Resource)
+		}
+		if !isValidAction(p.Action) {
+			return nil, common.NewDomainError("RB_INVALID", "invalid action: "+p.Action)
+		}
+	}
+	return s.repo.UpdateRole(ctx, id, body)
+}
+
+// DeleteRole removes a role.
+func (s *Service) DeleteRole(ctx context.Context, id uuid.UUID) error {
+	return s.repo.DeleteRole(ctx, id)
+}
+
+// ─── Admin Users ──────────────────────────────────────────────────────────────
+
+// ListUsers returns all admin users.
+func (s *Service) ListUsers(ctx context.Context) ([]*AdminUserSummary, error) {
+	return s.repo.ListUsers(ctx)
+}
+
+// CreateUser creates a new non-super-admin user with an optional role.
+func (s *Service) CreateUser(ctx context.Context, body CreateAdminUserBody) (*AdminUserSummary, error) {
+	if body.Email == "" || body.Password == "" {
+		return nil, common.NewDomainError("RB_INVALID", "email and password are required")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, fmt.Errorf("hash password: %w", err)
+	}
+	return s.repo.CreateUser(ctx, body.Email, string(hash), body.RoleID)
+}
+
+// UpdateUser changes the role assigned to a user.
+func (s *Service) UpdateUser(ctx context.Context, id uuid.UUID, roleID *uuid.UUID) error {
+	return s.repo.UpdateUser(ctx, id, roleID)
+}
+
+// DeleteUser removes a non-super-admin user.
+func (s *Service) DeleteUser(ctx context.Context, id uuid.UUID) error {
+	return s.repo.DeleteUser(ctx, id)
 }
 
 // ─── Cross-tenant transactions ────────────────────────────────────────────────

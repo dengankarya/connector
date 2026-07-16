@@ -51,9 +51,12 @@ func main() {
 
 	var id string
 	err = pool.QueryRow(ctx,
-		`INSERT INTO admin_users (email, password_hash)
-		 VALUES ($1, $2)
-		 ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, updated_at = NOW()
+		`INSERT INTO admin_users (email, password_hash, is_super_admin)
+		 VALUES ($1, $2, true)
+		 ON CONFLICT (email) DO UPDATE
+		   SET password_hash = EXCLUDED.password_hash,
+		       is_super_admin = true,
+		       updated_at = NOW()
 		 RETURNING id`,
 		*email, string(hash),
 	).Scan(&id)

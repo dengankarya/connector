@@ -3,10 +3,12 @@ package admin
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dengankarya/connector/common"
 	"github.com/gofiber/fiber/v3"
+	"github.com/google/uuid"
 )
 
 type controller struct {
@@ -23,14 +25,36 @@ func RegisterAuthHandlers(mux fiber.Router, svc *Service) {
 
 // RegisterHandlers mounts JWT-protected admin endpoints.
 //
-//	GET  /admin/transactions
-//	GET  /admin/payouts
-//	POST /admin/merchants/:tenantId/topup
+//	GET    /admin/transactions
+//	GET    /admin/payouts
+//	POST   /admin/merchants/:tenantId/topup
+//	GET    /admin/roles
+//	POST   /admin/roles
+//	PUT    /admin/roles/:id
+//	DELETE /admin/roles/:id
+//	GET    /admin/users
+//	POST   /admin/users
+//	PUT    /admin/users/:id
+//	DELETE /admin/users/:id
 func RegisterHandlers(mux fiber.Router, svc *Service) {
 	ctrl := &controller{svc: svc}
-	mux.Get("/transactions", ctrl.listTransactions)
-	mux.Get("/payouts", ctrl.listPayouts)
-	mux.Post("/merchants/:tenantId/topup", ctrl.topup)
+
+	// ── Cross-tenant data — permission-guarded ────────────────────────────────
+	mux.Get("/transactions", RequirePermission("transactions", "READ"), ctrl.listTransactions)
+	mux.Get("/payouts", RequirePermission("payouts", "READ"), ctrl.listPayouts)
+	mux.Post("/merchants/:tenantId/topup", RequirePermission("merchants", "WRITE"), ctrl.topup)
+
+	// ── Role management — super admin only ────────────────────────────────────
+	mux.Get("/roles", ctrl.listRoles)
+	mux.Post("/roles", ctrl.createRole)
+	mux.Put("/roles/:id", ctrl.updateRole)
+	mux.Delete("/roles/:id", ctrl.deleteRole)
+
+	// ── User management — super admin only ────────────────────────────────────
+	mux.Get("/users", ctrl.listUsers)
+	mux.Post("/users", ctrl.createUser)
+	mux.Put("/users/:id", ctrl.updateUser)
+	mux.Delete("/users/:id", ctrl.deleteUser)
 }
 
 // login godoc
@@ -80,6 +104,7 @@ func (ctrl *controller) login(c fiber.Ctx) error {
 //	@Success		200			{object}	common.Response{data=common.PaginationResponse[admin.AdminTransaction]}	"Transaction list"
 //	@Failure		400			{object}	common.Response															"Invalid query params"
 //	@Failure		401			{object}	common.Response															"Unauthorized"
+//	@Failure		403			{object}	common.Response															"Forbidden"
 //	@Failure		500			{object}	common.Response															"Internal server error"
 //	@Router			/admin/transactions [get]
 func (ctrl *controller) listTransactions(c fiber.Ctx) error {
@@ -136,8 +161,8 @@ func (ctrl *controller) listTransactions(c fiber.Ctx) error {
 //	@Param			limit	query		int											false	"Page size (default 20, max 100)"
 //	@Param			offset	query		int											false	"Offset for pagination"
 //	@Success		200		{object}	common.Response{data=[]admin.AdminPayout}	"Payout list"
-//	@Failure		400		{object}	common.Response								"Invalid query params"
 //	@Failure		401		{object}	common.Response								"Unauthorized"
+//	@Failure		403		{object}	common.Response								"Forbidden"
 //	@Failure		500		{object}	common.Response								"Internal server error"
 //	@Router			/admin/payouts [get]
 func (ctrl *controller) listPayouts(c fiber.Ctx) error {
@@ -169,7 +194,7 @@ func (ctrl *controller) listPayouts(c fiber.Ctx) error {
 // topup godoc
 //
 //	@Summary		Top up merchant shipping balance (admin)
-//	@Description	Credits the shipping wallet of the specified merchant. Requires admin JWT.
+//	@Description	Credits the shipping wallet of the specified merchant. Requires admin JWT + merchants:WRITE permission.
 //	@Tags			Admin
 //	@Accept			json
 //	@Produce		json
@@ -178,6 +203,7 @@ func (ctrl *controller) listPayouts(c fiber.Ctx) error {
 //	@Success		201			{object}	common.Response{data=admin.ShippingTopup}	"Top-up recorded"
 //	@Failure		400			{object}	common.Response								"Invalid request"
 //	@Failure		401			{object}	common.Response								"Unauthorized"
+//	@Failure		403			{object}	common.Response								"Forbidden"
 //	@Failure		500			{object}	common.Response								"Internal server error"
 //	@Router			/admin/merchants/{tenantId}/topup [post]
 func (ctrl *controller) topup(c fiber.Ctx) error {
@@ -205,11 +231,165 @@ func (ctrl *controller) topup(c fiber.Ctx) error {
 	return c.Status(http.StatusCreated).JSON(common.Response{Status: "Created", Data: topup})
 }
 
+// ─── Role management ──────────────────────────────────────────────────────────
+
+func (ctrl *controller) listRoles(c fiber.Ctx) error {
+	if !isSuperAdmin(c) {
+		return forbidden(c)
+	}
+	roles, err := ctrl.svc.ListRoles(c.Context())
+	if err != nil {
+		return internalError(c, err)
+	}
+	return c.JSON(common.Response{Status: "OK", Data: roles})
+}
+
+func (ctrl *controller) createRole(c fiber.Ctx) error {
+	if !isSuperAdmin(c) {
+		return forbidden(c)
+	}
+	adminID, ok := adminIDFromCtx(c)
+	if !ok {
+		return badRequest(c, "missing admin identity")
+	}
+	var body CreateRoleBody
+	if err := c.Bind().JSON(&body); err != nil {
+		return badRequest(c, "invalid request body")
+	}
+	role, err := ctrl.svc.CreateRole(c.Context(), body, adminID)
+	if err != nil {
+		if isDomainErr(err, "RB_") {
+			return badRequest(c, err.Error())
+		}
+		return internalError(c, err)
+	}
+	return c.Status(http.StatusCreated).JSON(common.Response{Status: "Created", Data: role})
+}
+
+func (ctrl *controller) updateRole(c fiber.Ctx) error {
+	if !isSuperAdmin(c) {
+		return forbidden(c)
+	}
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return badRequest(c, "invalid role id")
+	}
+	var body CreateRoleBody
+	if err := c.Bind().JSON(&body); err != nil {
+		return badRequest(c, "invalid request body")
+	}
+	role, err := ctrl.svc.UpdateRole(c.Context(), id, body)
+	if err != nil {
+		if isDomainErr(err, "RB_") {
+			return badRequest(c, err.Error())
+		}
+		if strings.Contains(err.Error(), "not found") {
+			return c.Status(http.StatusNotFound).JSON(common.Response{Status: "Not Found", Error: err.Error()})
+		}
+		return internalError(c, err)
+	}
+	return c.JSON(common.Response{Status: "OK", Data: role})
+}
+
+func (ctrl *controller) deleteRole(c fiber.Ctx) error {
+	if !isSuperAdmin(c) {
+		return forbidden(c)
+	}
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return badRequest(c, "invalid role id")
+	}
+	if err := ctrl.svc.DeleteRole(c.Context(), id); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return c.Status(http.StatusNotFound).JSON(common.Response{Status: "Not Found", Error: err.Error()})
+		}
+		return internalError(c, err)
+	}
+	return c.JSON(common.Response{Status: "OK"})
+}
+
+// ─── User management ──────────────────────────────────────────────────────────
+
+func (ctrl *controller) listUsers(c fiber.Ctx) error {
+	if !isSuperAdmin(c) {
+		return forbidden(c)
+	}
+	users, err := ctrl.svc.ListUsers(c.Context())
+	if err != nil {
+		return internalError(c, err)
+	}
+	return c.JSON(common.Response{Status: "OK", Data: users})
+}
+
+func (ctrl *controller) createUser(c fiber.Ctx) error {
+	if !isSuperAdmin(c) {
+		return forbidden(c)
+	}
+	var body CreateAdminUserBody
+	if err := c.Bind().JSON(&body); err != nil {
+		return badRequest(c, "invalid request body")
+	}
+	user, err := ctrl.svc.CreateUser(c.Context(), body)
+	if err != nil {
+		if isDomainErr(err, "RB_") {
+			return badRequest(c, err.Error())
+		}
+		return internalError(c, err)
+	}
+	return c.Status(http.StatusCreated).JSON(common.Response{Status: "Created", Data: user})
+}
+
+func (ctrl *controller) updateUser(c fiber.Ctx) error {
+	if !isSuperAdmin(c) {
+		return forbidden(c)
+	}
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return badRequest(c, "invalid user id")
+	}
+	var body struct {
+		RoleID *uuid.UUID `json:"role_id"`
+	}
+	if err := c.Bind().JSON(&body); err != nil {
+		return badRequest(c, "invalid request body")
+	}
+	if err := ctrl.svc.UpdateUser(c.Context(), id, body.RoleID); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return c.Status(http.StatusNotFound).JSON(common.Response{Status: "Not Found", Error: err.Error()})
+		}
+		return internalError(c, err)
+	}
+	return c.JSON(common.Response{Status: "OK"})
+}
+
+func (ctrl *controller) deleteUser(c fiber.Ctx) error {
+	if !isSuperAdmin(c) {
+		return forbidden(c)
+	}
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return badRequest(c, "invalid user id")
+	}
+	if err := ctrl.svc.DeleteUser(c.Context(), id); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return c.Status(http.StatusNotFound).JSON(common.Response{Status: "Not Found", Error: err.Error()})
+		}
+		return internalError(c, err)
+	}
+	return c.JSON(common.Response{Status: "OK"})
+}
+
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 func badRequest(c fiber.Ctx, msg string) error {
 	return c.Status(http.StatusBadRequest).JSON(common.Response{
 		Status: "Bad Request", Error: msg,
+	})
+}
+
+func forbidden(c fiber.Ctx) error {
+	return c.Status(http.StatusForbidden).JSON(common.Response{
+		Status: "Forbidden", Error: "super admin access required",
 	})
 }
 
