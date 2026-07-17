@@ -357,13 +357,15 @@ const txnColumns = `
 	COALESCE(checkout_url, ''),
 	COALESCE(payment_method, ''),
 	COALESCE(payment_channel, ''),
-	amount, currency, platform_fee, shipping_fee, merchant_amount,
+	amount, currency,
+	COALESCE(platform_fee, 0), COALESCE(shipping_fee, 0), COALESCE(merchant_amount, 0),
 	status,
 	COALESCE(description, ''),
 	metadata,
 	payment_data,
 	expires_at, paid_at, settled_at,
-	xendit_fee, vat, xendit_withholding_tax, third_party_wht,
+	COALESCE(xendit_fee, 0), COALESCE(vat, 0),
+	COALESCE(xendit_withholding_tax, 0), COALESCE(third_party_wht, 0),
 	estimated_settlement_time,
 	created_at, updated_at, version`
 
