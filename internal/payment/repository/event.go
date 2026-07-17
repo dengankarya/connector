@@ -39,12 +39,14 @@ func (r *WebhookEventRepository) Create(ctx context.Context, e *domain.WebhookEv
 			id, provider, provider_event_id, event_type,
 			raw_payload, headers, signature, signature_valid,
 			processing_status, processing_attempts,
+			provider_invoice_id,
 			created_at
 		) VALUES (
 			$1, $2, $3, $4,
 			$5, $6::jsonb, $7, $8,
 			$9, $10,
-			$11
+			$11,
+			$12
 		)
 		ON CONFLICT (provider, provider_event_id) DO NOTHING`
 
@@ -52,6 +54,7 @@ func (r *WebhookEventRepository) Create(ctx context.Context, e *domain.WebhookEv
 		e.ID, e.Provider, e.ProviderEventID, e.EventType,
 		e.RawPayload, string(headersJSON), nilIfEmpty(e.Signature), e.SignatureValid,
 		string(e.ProcessingStatus), e.ProcessingAttempts,
+		nilIfEmpty(e.ProviderInvoiceID),
 		e.CreatedAt,
 	)
 	if err != nil {
@@ -186,7 +189,8 @@ const eventColumns = `
 	COALESCE(last_error, ''),
 	transaction_id::text,
 	processed_at,
-	created_at`
+	created_at,
+	COALESCE(provider_invoice_id, '')`
 
 func scanEvent(row pgx.Row) (*domain.WebhookEvent, error) {
 	var (
@@ -205,6 +209,7 @@ func scanEvent(row pgx.Row) (*domain.WebhookEvent, error) {
 		&txnIDStr,
 		&processedAt,
 		&e.CreatedAt,
+		&e.ProviderInvoiceID,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

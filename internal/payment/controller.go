@@ -1,6 +1,7 @@
 package payment
 
 import (
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -505,9 +506,5 @@ func isErrNotFound(err error, target *domain.ErrNotFound) bool {
 	if err == nil {
 		return false
 	}
-	nf, ok := err.(domain.ErrNotFound)
-	if ok {
-		*target = nf
-	}
-	return ok
+	return errors.As(err, target)
 }

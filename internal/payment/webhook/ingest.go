@@ -85,6 +85,12 @@ func RegisterIngestHandler(
 			return c.Status(http.StatusBadRequest).JSON(map[string]string{"status": "bad_request", "error": err.Error()})
 		}
 
+		// nil means the provider intentionally skips this event (e.g. order.created, settlement.settled).
+		if parsed == nil {
+			log.Info("webhook event skipped by provider")
+			return c.Status(http.StatusOK).JSON(map[string]string{"status": "ok"})
+		}
+
 		log.WithFields(logrus.Fields{
 			"provider_event_id":   parsed.ProviderEventID,
 			"event_type":          parsed.EventType,
