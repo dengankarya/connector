@@ -24,11 +24,11 @@ type Repository interface {
 // Service writes balanced double-entry journals to the ledger.
 type Service struct {
 	repo   Repository
-	logger *logger.Logger
+	logger logger.Logger
 }
 
 // New creates a ledger Service.
-func New(repo Repository, logger *logger.Logger) *Service {
+func New(repo Repository, logger logger.Logger) *Service {
 	return &Service{repo: repo, logger: logger}
 }
 

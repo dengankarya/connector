@@ -16,7 +16,7 @@ type Module struct {
 func NewModule(
 	pool *pgxpool.Pool,
 	txRunner *postgres.TxRunner,
-	logger *logger.Logger,
+	logger logger.Logger,
 ) *Module {
 	if pool == nil {
 		return &Module{

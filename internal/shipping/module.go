@@ -21,7 +21,7 @@ func NewModule(
 	logisticsClient LogisticAggregator,
 	shippingProvider provider.ShippingProvider,
 	accountManager domain.AccountManager,
-	logger *logger.Logger,
+	logger logger.Logger,
 ) *Module {
 	var shipmentRepo *shipmentrepo.ShipmentRepository
 	if pool != nil {

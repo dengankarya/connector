@@ -16,11 +16,11 @@ type Service struct {
 	repo       *Repository
 	accountSvc *account.Service
 	secret     string
-	logger     *logger.Logger
+	logger     logger.Logger
 }
 
 // NewService creates a Service.
-func NewService(repo *Repository, accountSvc *account.Service, secret string, logger *logger.Logger) *Service {
+func NewService(repo *Repository, accountSvc *account.Service, secret string, logger logger.Logger) *Service {
 	return &Service{repo: repo, accountSvc: accountSvc, secret: secret, logger: logger}
 }
 

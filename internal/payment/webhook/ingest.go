@@ -34,7 +34,7 @@ func RegisterIngestHandler(
 	eventRepo *repository.WebhookEventRepository,
 	logRepo *repository.WebhookRequestLogRepository,
 	enqueuer *asynq.Client,
-	logger *logger.Logger,
+	logger logger.Logger,
 	accountHandler AccountEventHandler,
 ) {
 	mux.Post(route, func(c fiber.Ctx) error {

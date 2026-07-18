@@ -23,11 +23,11 @@ type ProcessWebhookPayload struct {
 // AsynqHandler is the asynq task handler for TaskProcessWebhookEvent.
 type AsynqHandler struct {
 	processor *Processor
-	logger    *logger.Logger
+	logger    logger.Logger
 }
 
 // NewAsynqHandler creates an AsynqHandler.
-func NewAsynqHandler(processor *Processor, logger *logger.Logger) *AsynqHandler {
+func NewAsynqHandler(processor *Processor, logger logger.Logger) *AsynqHandler {
 	return &AsynqHandler{processor: processor, logger: logger}
 }
 

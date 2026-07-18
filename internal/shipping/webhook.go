@@ -47,7 +47,7 @@ type webhookController struct {
 	repo           *repository.ShipmentRepository // may be nil
 	forwarder      ShipmentWebhookForwarder       // may be nil
 	accountManager domain.AccountManager          // may be nil
-	logger         *logger.Logger
+	logger         logger.Logger
 }
 
 // RegisterWebhookHandler registers the public Biteship webhook endpoint on the root app
@@ -59,7 +59,7 @@ func RegisterWebhookHandler(
 	repo *repository.ShipmentRepository,
 	forwarder ShipmentWebhookForwarder,
 	accountManager domain.AccountManager,
-	logger *logger.Logger,
+	logger logger.Logger,
 ) {
 	ctrl := webhookController{
 		signatureKey:   signatureKey,
@@ -85,7 +85,7 @@ func (ctrl *webhookController) handleWebhook(c fiber.Ctx) error {
 	// Validate signature header when configured.
 	if ctrl.signatureKey != "" && ctrl.signatureValue != "" {
 		if c.Get(ctrl.signatureKey) != ctrl.signatureValue {
-			ctrl.logger.Warn(c.Context(), "invalid biteship webhook signature", nil)
+			ctrl.logger.WithFields(c.Context(), log.Fields{}).Warn("invalid biteship webhook signature")
 			return c.Status(http.StatusOK).JSON(common.Response{Status: "OK"})
 		}
 	}

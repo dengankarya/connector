@@ -38,7 +38,7 @@ func NewModule(
 	providers map[string]provider.PaymentProvider,
 	accountFinder paymentservice.GatewayAccountFinder,
 	forwarder webhook.PaymentForwarder,
-	logger *logger.Logger,
+	logger logger.Logger,
 ) *Module {
 	if pool == nil {
 		return &Module{Providers: providers}

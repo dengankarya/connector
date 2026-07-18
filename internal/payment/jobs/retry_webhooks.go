@@ -16,11 +16,11 @@ const retryWebhooksBatchSize = 50
 // Run every 10 minutes via the asynq periodic task scheduler.
 type RetryWebhooksJob struct {
 	replay *webhook.ReplayService
-	logger *logger.Logger
+	logger logger.Logger
 }
 
 // NewRetryWebhooksJob creates a RetryWebhooksJob.
-func NewRetryWebhooksJob(replay *webhook.ReplayService, logger *logger.Logger) *RetryWebhooksJob {
+func NewRetryWebhooksJob(replay *webhook.ReplayService, logger logger.Logger) *RetryWebhooksJob {
 	return &RetryWebhooksJob{replay: replay, logger: logger}
 }
 

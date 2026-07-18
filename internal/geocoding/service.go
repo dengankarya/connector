@@ -9,10 +9,10 @@ import (
 
 type Service struct {
 	geocoders Geocoders
-	logger    *logger.Logger
+	logger    logger.Logger
 }
 
-func NewService(geocoders Geocoders, logger *logger.Logger) *Service {
+func NewService(geocoders Geocoders, logger logger.Logger) *Service {
 	return &Service{geocoders: geocoders, logger: logger}
 }
 

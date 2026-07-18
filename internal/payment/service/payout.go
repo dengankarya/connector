@@ -34,7 +34,7 @@ type PayoutService struct {
 	ledgerSvc  *ledger.Service
 	prov       provider.PaymentProvider
 	txRunner   *repository.TxRunner
-	logger     *logger.Logger
+	logger     logger.Logger
 }
 
 // NewPayoutService creates a PayoutService.
@@ -44,7 +44,7 @@ func NewPayoutService(
 	ledgerSvc *ledger.Service,
 	prov provider.PaymentProvider,
 	txRunner *repository.TxRunner,
-	logger *logger.Logger,
+	logger logger.Logger,
 ) *PayoutService {
 	return &PayoutService{
 		payoutRepo: payoutRepo,

@@ -19,11 +19,11 @@ import (
 type Service struct {
 	repo     *Repository
 	txRunner *postgres.TxRunner
-	logger   *logger.Logger
+	logger   logger.Logger
 }
 
 // NewService creates a Service.
-func NewService(repo *Repository, txRunner *postgres.TxRunner, logger *logger.Logger) *Service {
+func NewService(repo *Repository, txRunner *postgres.TxRunner, logger logger.Logger) *Service {
 	return &Service{repo: repo, txRunner: txRunner, logger: logger}
 }
 

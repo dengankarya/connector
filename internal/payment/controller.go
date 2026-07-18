@@ -27,7 +27,7 @@ type paymentController struct {
 	providers        map[string]provider.PaymentProvider // keyed by provider name (e.g. "durianpay")
 	enqueuer         *asynq.Client
 	webhookProcessor *webhook.Processor // optional; used by dp-sync to confirm payment + record ledger
-	logger           *logger.Logger
+	logger           logger.Logger
 }
 
 // RegisterPaymentHandlers registers the payment transaction endpoints.
@@ -38,7 +38,7 @@ func RegisterPaymentHandlers(
 	svc *paymentservice.PaymentService,
 	providers map[string]provider.PaymentProvider,
 	enqueuer *asynq.Client,
-	logger *logger.Logger,
+	logger logger.Logger,
 	webhookProc ...*webhook.Processor,
 ) {
 	var wp *webhook.Processor

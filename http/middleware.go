@@ -93,29 +93,6 @@ func adminJWTAuth(secret string) fiber.Handler {
 // }
 
 func requestLogger() fiber.Handler {
-	// return fiblog.New(fiblog.Config{
-	// 	LoggerFunc: func(c fiber.Ctx, data *fiblog.Data, _ *fiblog.Config) error {
-	// 		fields := log.Fields{
-	// 			"status":  c.Response().StatusCode(),
-	// 			"method":  c.Method(),
-	// 			"path":    c.Path(),
-	// 			"ip":      c.IP(),
-	// 			"latency": data.Stop.Sub(data.Start).String(),
-	// 		}
-
-	// 		if reqID, ok := c.Context().Value(logger.RequestIDKey).(string); ok && reqID != "" {
-	// 			fields["request_id"] = reqID
-	// 		}
-
-	// 		if data.ChainErr != nil {
-	// 			fields["error"] = data.ChainErr.Error()
-	// 			log.WithFields(fields).Error("request")
-	// 		} else {
-	// 			log.WithFields(fields).Info("request")
-	// 		}
-	// 		return nil
-	// 	},
-	// })
 	return func(c fiber.Ctx) error {
 		start := time.Now()
 
