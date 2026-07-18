@@ -3,14 +3,15 @@ package main
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/dengankarya/connector/common"
 	"github.com/dengankarya/connector/config"
 	_ "github.com/dengankarya/connector/docs"
 	"github.com/dengankarya/connector/internal/admin"
+	"github.com/dengankarya/connector/pkg/trace"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/adaptor"
-	"github.com/gofiber/fiber/v3/middleware/logger"
 	log "github.com/sirupsen/logrus"
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 )
@@ -76,22 +77,31 @@ func adminJWTAuth(secret string) fiber.Handler {
 }
 
 func requestLogger() fiber.Handler {
-	return logger.New(logger.Config{
-		LoggerFunc: func(c fiber.Ctx, data *logger.Data, _ *logger.Config) error {
-			fields := log.Fields{
-				"status":  c.Response().StatusCode(),
-				"method":  c.Method(),
-				"path":    c.Path(),
-				"ip":      c.IP(),
-				"latency": data.Stop.Sub(data.Start).String(),
-			}
-			if data.ChainErr != nil {
-				fields["error"] = data.ChainErr.Error()
-				log.WithFields(fields).Error("request")
-			} else {
-				log.WithFields(fields).Info("request")
-			}
-			return nil
-		},
-	})
+	return func(c fiber.Ctx) error {
+		start := time.Now()
+
+		tp := c.Get("traceparent")
+		if tp == "" {
+			tp = trace.Generate()
+		}
+		c.SetContext(trace.StoreInContext(c.Context(), tp))
+
+		err := c.Next()
+
+		fields := log.Fields{
+			"status":      c.Response().StatusCode(),
+			"method":      c.Method(),
+			"path":        c.Path(),
+			"ip":          c.IP(),
+			"latency":     time.Since(start).String(),
+			"traceparent": tp,
+		}
+		if err != nil {
+			fields["error"] = err.Error()
+			log.WithFields(fields).Error("request")
+		} else {
+			log.WithFields(fields).Info("request")
+		}
+		return err
+	}
 }
