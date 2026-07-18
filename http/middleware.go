@@ -118,4 +118,31 @@ func requestLogger() fiber.Handler {
 			return nil
 		},
 	})
+	// return func(c fiber.Ctx) error {
+	// 	start := time.Now()
+
+	// 	tp := c.Get("traceparent")
+	// 	if tp == "" {
+	// 		tp = trace.Generate()
+	// 	}
+	// 	c.SetContext(trace.StoreInContext(c.Context(), tp))
+
+	// 	err := c.Next()
+
+	// 	fields := log.Fields{
+	// 		"status":      c.Response().StatusCode(),
+	// 		"method":      c.Method(),
+	// 		"path":        c.Path(),
+	// 		"ip":          c.IP(),
+	// 		"latency":     time.Since(start).String(),
+	// 		"traceparent": tp,
+	// 	}
+	// 	if err != nil {
+	// 		fields["error"] = err.Error()
+	// 		log.WithFields(fields).Error("request")
+	// 	} else {
+	// 		log.WithFields(fields).Info("request")
+	// 	}
+	// 	return err
+	// }
 }
