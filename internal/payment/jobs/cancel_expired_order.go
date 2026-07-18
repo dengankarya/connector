@@ -35,11 +35,11 @@ func NewCancelExpiredOrderTask(orderNumber string, processAt time.Time) (*asynq.
 // It calls Tokokarya's cancel-expired-orders cron endpoint for the given order.
 type CancelExpiredOrderJob struct {
 	tokokaryaClient *tokokarya.Client
-	logger          *logger.Logger
+	logger          logger.Logger
 }
 
 // NewCancelExpiredOrderJob creates a CancelExpiredOrderJob.
-func NewCancelExpiredOrderJob(tokokaryaClient *tokokarya.Client, logger *logger.Logger) *CancelExpiredOrderJob {
+func NewCancelExpiredOrderJob(tokokaryaClient *tokokarya.Client, logger logger.Logger) *CancelExpiredOrderJob {
 	return &CancelExpiredOrderJob{tokokaryaClient: tokokaryaClient, logger: logger}
 }
 

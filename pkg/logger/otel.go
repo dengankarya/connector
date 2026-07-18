@@ -27,30 +27,53 @@ func (h *OtelLogrusHook) Levels() []logrus.Level {
 func (h *OtelLogrusHook) Fire(entry *logrus.Entry) error {
 	var record otellogapi.Record
 
-	// Map logrus level to OTEL severity
 	record.SetSeverityText(entry.Level.String())
+	record.SetSeverity(levelToOtelSeverity(entry.Level))
 	record.SetTimestamp(entry.Time)
 	record.SetBody(otellogapi.StringValue(entry.Message))
 
-	// Convert logrus fields to OTEL attributes
 	var attrs []otellogapi.KeyValue
 	for k, v := range entry.Data {
 		attrs = append(attrs, otellogapi.String(k, fmt.Sprintf("%v", v)))
 	}
 	record.AddAttributes(attrs...)
 
-	h.logger.Emit(context.Background(), record)
+	ctx := entry.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	h.logger.Emit(ctx, record)
 	return nil
 }
 
-// InitOtelProvider creates and returns a configured LoggerProvider
+func levelToOtelSeverity(level logrus.Level) otellogapi.Severity {
+	switch level {
+	case logrus.TraceLevel:
+		return otellogapi.SeverityTrace
+	case logrus.DebugLevel:
+		return otellogapi.SeverityDebug
+	case logrus.InfoLevel:
+		return otellogapi.SeverityInfo
+	case logrus.WarnLevel:
+		return otellogapi.SeverityWarn
+	case logrus.ErrorLevel:
+		return otellogapi.SeverityError
+	case logrus.FatalLevel:
+		return otellogapi.SeverityFatal
+	case logrus.PanicLevel:
+		return otellogapi.SeverityFatal4
+	default:
+		return otellogapi.SeverityUndefined
+	}
+}
+
+// InitOtelProvider creates and returns a configured LoggerProvider.
 func InitOtelProvider(ctx context.Context, endpoint, token, serviceName string) (*log.LoggerProvider, error) {
-	// PostHog expects logs at /v1/logs
 	url := endpoint
 	if url[len(url)-1] == '/' {
 		url = url[:len(url)-1]
 	}
-	url = url + "/v1/logs"
+	url += "/v1/logs"
 
 	exporter, err := otlploghttp.New(ctx,
 		otlploghttp.WithEndpointURL(url),
@@ -73,10 +96,8 @@ func InitOtelProvider(ctx context.Context, endpoint, token, serviceName string) 
 		return nil, err
 	}
 
-	provider := log.NewLoggerProvider(
+	return log.NewLoggerProvider(
 		log.WithProcessor(log.NewBatchProcessor(exporter)),
 		log.WithResource(res),
-	)
-
-	return provider, nil
+	), nil
 }

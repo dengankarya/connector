@@ -24,15 +24,15 @@ type Client struct {
 	apiKey  string
 	baseURL string
 	http    *http.Client
-	logger  *logger.Logger
+	logger  logger.Logger
 }
 
 // NewClient creates a DurianPay client.
 // apiKey is used as the Basic Auth username (empty password).
 // baseURL defaults to https://api.durianpay.id if empty.
-func NewClient(apiKey, baseURL string, loggerInst *logger.Logger) *Client {
-	if loggerInst == nil {
-		loggerInst = logger.New(logrus.New())
+func NewClient(apiKey, baseURL string, lgr logger.Logger) *Client {
+	if lgr == nil {
+		lgr = logger.New(logrus.New())
 	}
 	if baseURL == "" {
 		baseURL = defaultBaseURL
@@ -41,7 +41,7 @@ func NewClient(apiKey, baseURL string, loggerInst *logger.Logger) *Client {
 		apiKey:  apiKey,
 		baseURL: baseURL,
 		http:    &http.Client{Timeout: 30 * time.Second},
-		logger:  loggerInst,
+		logger:  lgr,
 	}
 }
 

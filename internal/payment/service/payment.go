@@ -72,7 +72,7 @@ type PaymentService struct {
 	ledger        *ledger.Service
 	txRunner      *repository.TxRunner
 	gatewayFinder GatewayAccountFinder // optional; nil = skip sub-account lookup
-	logger        *logger.Logger
+	logger        logger.Logger
 }
 
 // NewPaymentService creates a PaymentService.
@@ -82,7 +82,7 @@ func NewPaymentService(
 	txRunner *repository.TxRunner,
 	ledgerSvc *ledger.Service,
 	gatewayFinder GatewayAccountFinder,
-	logger *logger.Logger,
+	logger logger.Logger,
 ) *PaymentService {
 	return &PaymentService{
 		txnRepo:       txnRepo,

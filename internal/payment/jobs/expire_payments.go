@@ -18,14 +18,14 @@ const expirePaymentsBatchSize = 100
 type ExpirePaymentsJob struct {
 	txnRepo  *repository.TransactionRepository
 	txRunner *repository.TxRunner
-	logger   *logger.Logger
+	logger   logger.Logger
 }
 
 // NewExpirePaymentsJob creates an ExpirePaymentsJob.
 func NewExpirePaymentsJob(
 	txnRepo *repository.TransactionRepository,
 	txRunner *repository.TxRunner,
-	logger *logger.Logger,
+	logger logger.Logger,
 ) *ExpirePaymentsJob {
 	return &ExpirePaymentsJob{txnRepo: txnRepo, txRunner: txRunner, logger: logger}
 }

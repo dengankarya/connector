@@ -17,15 +17,14 @@ import (
 type ReplayService struct {
 	eventRepo *repository.WebhookEventRepository
 	enqueuer  *asynq.Client
-	logger    *logger.Logger
+	logger    logger.Logger
 }
 
 // NewReplayService creates a ReplayService.
 func NewReplayService(
 	eventRepo *repository.WebhookEventRepository,
 	enqueuer *asynq.Client,
-	logger *logger.Logger,
-
+	logger logger.Logger,
 ) *ReplayService {
 	return &ReplayService{
 		eventRepo: eventRepo,

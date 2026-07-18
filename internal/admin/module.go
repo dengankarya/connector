@@ -17,7 +17,7 @@ func NewModule(
 	pool *pgxpool.Pool,
 	accountSvc *account.Service,
 	secret string,
-	logger *logger.Logger,
+	logger logger.Logger,
 ) *Module {
 	if pool == nil {
 		return &Module{}

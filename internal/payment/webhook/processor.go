@@ -45,7 +45,7 @@ type Processor struct {
 	ledger    *ledger.Service
 	txRunner  *repository.TxRunner
 	forwarder PaymentForwarder // optional; if nil Tokokarya forwarding is skipped
-	logger    *logger.Logger
+	logger    logger.Logger
 }
 
 // NewProcessor creates a Processor with all required dependencies.
@@ -56,7 +56,7 @@ func NewProcessor(
 	ledgerSvc *ledger.Service,
 	txRunner *repository.TxRunner,
 	forwarder PaymentForwarder,
-	logger *logger.Logger,
+	logger logger.Logger,
 ) *Processor {
 	return &Processor{
 		eventRepo: eventRepo,
