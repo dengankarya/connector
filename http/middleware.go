@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -8,9 +9,11 @@ import (
 	"github.com/dengankarya/connector/config"
 	_ "github.com/dengankarya/connector/docs"
 	"github.com/dengankarya/connector/internal/admin"
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/adaptor"
-	"github.com/gofiber/fiber/v3/middleware/logger"
+	fiblog "github.com/gofiber/fiber/v3/middleware/logger"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 )
@@ -75,9 +78,25 @@ func adminJWTAuth(secret string) fiber.Handler {
 	}
 }
 
+func requestIDMiddleware() fiber.Handler {
+	return func(c fiber.Ctx) error {
+		reqID := string(c.Request().Header.Peek("X-Request-ID"))
+		if reqID == "" {
+			reqID = uuid.New().String()
+		}
+
+		c.Set("X-Request-ID", reqID)
+
+		ctx := context.WithValue(c.Context(), logger.RequestIDKey, reqID)
+		c.SetContext(ctx)
+
+		return c.Next()
+	}
+}
+
 func requestLogger() fiber.Handler {
-	return logger.New(logger.Config{
-		LoggerFunc: func(c fiber.Ctx, data *logger.Data, _ *logger.Config) error {
+	return fiblog.New(fiblog.Config{
+		LoggerFunc: func(c fiber.Ctx, data *fiblog.Data, _ *fiblog.Config) error {
 			fields := log.Fields{
 				"status":  c.Response().StatusCode(),
 				"method":  c.Method(),
@@ -85,6 +104,11 @@ func requestLogger() fiber.Handler {
 				"ip":      c.IP(),
 				"latency": data.Stop.Sub(data.Start).String(),
 			}
+
+			if reqID, ok := c.Context().Value(logger.RequestIDKey).(string); ok && reqID != "" {
+				fields["request_id"] = reqID
+			}
+
 			if data.ChainErr != nil {
 				fields["error"] = data.ChainErr.Error()
 				log.WithFields(fields).Error("request")

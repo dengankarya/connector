@@ -3,15 +3,16 @@ package geocoding
 import (
 	"context"
 
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/sirupsen/logrus"
 )
 
 type Service struct {
 	geocoders Geocoders
-	logger    *logrus.Logger
+	logger    *logger.Logger
 }
 
-func NewService(geocoders Geocoders, logger *logrus.Logger) *Service {
+func NewService(geocoders Geocoders, logger *logger.Logger) *Service {
 	return &Service{geocoders: geocoders, logger: logger}
 }
 
@@ -19,7 +20,7 @@ func NewService(geocoders Geocoders, logger *logrus.Logger) *Service {
 func (s *Service) Geocode(ctx context.Context, address string) (*GeocodingResult, error) {
 	result, err := s.geocoders.GetAddressLatLong(ctx, address)
 	if err != nil {
-		s.logger.WithFields(logrus.Fields{
+		s.logger.WithFields(ctx, logrus.Fields{
 			"address": address,
 			"err":     err,
 		}).Warn("geocode failed")

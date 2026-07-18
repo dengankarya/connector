@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dengankarya/connector/internal/payment/provider"
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/sirupsen/logrus"
 )
 
@@ -23,15 +24,15 @@ type Client struct {
 	apiKey  string
 	baseURL string
 	http    *http.Client
-	logger  *logrus.Logger
+	logger  *logger.Logger
 }
 
 // NewClient creates a DurianPay client.
 // apiKey is used as the Basic Auth username (empty password).
 // baseURL defaults to https://api.durianpay.id if empty.
-func NewClient(apiKey, baseURL string, logger *logrus.Logger) *Client {
-	if logger == nil {
-		logger = logrus.New()
+func NewClient(apiKey, baseURL string, loggerInst *logger.Logger) *Client {
+	if loggerInst == nil {
+		loggerInst = logger.New(logrus.New())
 	}
 	if baseURL == "" {
 		baseURL = defaultBaseURL
@@ -40,7 +41,7 @@ func NewClient(apiKey, baseURL string, logger *logrus.Logger) *Client {
 		apiKey:  apiKey,
 		baseURL: baseURL,
 		http:    &http.Client{Timeout: 30 * time.Second},
-		logger:  logger,
+		logger:  loggerInst,
 	}
 }
 
@@ -168,7 +169,7 @@ func (c *Client) CreateInvoice(ctx context.Context, req provider.CreateInvoiceRe
 		Request: inner,
 	}
 
-	c.logger.WithFields(logrus.Fields{
+	c.logger.WithFields(ctx, logrus.Fields{
 		"method":      "CreateInvoice",
 		"order_id":    orderResp.Data.ID,
 		"method_type": methodType,
@@ -242,7 +243,7 @@ type durianpayWebhook struct {
 //   - settlement.settled → payment.settled             (funds disbursed — batch; one event per payment in array)
 //   - order.created      → skipped (we created the order ourselves)
 //   - order.completed    → skipped (redundant with payment.completed; payload has order_id not payment_id)
-func (c *Client) ParseWebhookEvent(_ context.Context, payload []byte) (*provider.WebhookEvent, error) {
+func (c *Client) ParseWebhookEvent(ctx context.Context, payload []byte) (*provider.WebhookEvent, error) {
 	var wh durianpayWebhook
 	if err := json.Unmarshal(payload, &wh); err != nil {
 		return nil, fmt.Errorf("durianpay: parse webhook: %w", err)
@@ -279,7 +280,7 @@ func (c *Client) ParseWebhookEvent(_ context.Context, payload []byte) (*provider
 	case "payment.expired":
 		eventType = "payment_session.expired"
 	default:
-		c.logger.WithField("event", wh.Event).Warn("durianpay: unrecognised event — skipping")
+		c.logger.WithField(ctx, "event", wh.Event).Warn("durianpay: unrecognised event — skipping")
 		return nil, nil
 	}
 

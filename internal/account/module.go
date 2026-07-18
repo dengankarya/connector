@@ -1,9 +1,9 @@
 package account
 
 import (
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/dengankarya/connector/pkg/postgres"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/sirupsen/logrus"
 )
 
 // Module contains all account-related services.
@@ -16,7 +16,7 @@ type Module struct {
 func NewModule(
 	pool *pgxpool.Pool,
 	txRunner *postgres.TxRunner,
-	logger *logrus.Logger,
+	logger *logger.Logger,
 ) *Module {
 	if pool == nil {
 		return &Module{

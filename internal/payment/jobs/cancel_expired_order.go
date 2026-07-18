@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dengankarya/connector/internal/worker"
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/dengankarya/connector/pkg/tokokarya"
 	"github.com/hibiken/asynq"
 	"github.com/sirupsen/logrus"
@@ -34,11 +35,11 @@ func NewCancelExpiredOrderTask(orderNumber string, processAt time.Time) (*asynq.
 // It calls Tokokarya's cancel-expired-orders cron endpoint for the given order.
 type CancelExpiredOrderJob struct {
 	tokokaryaClient *tokokarya.Client
-	logger          *logrus.Logger
+	logger          *logger.Logger
 }
 
 // NewCancelExpiredOrderJob creates a CancelExpiredOrderJob.
-func NewCancelExpiredOrderJob(tokokaryaClient *tokokarya.Client, logger *logrus.Logger) *CancelExpiredOrderJob {
+func NewCancelExpiredOrderJob(tokokaryaClient *tokokarya.Client, logger *logger.Logger) *CancelExpiredOrderJob {
 	return &CancelExpiredOrderJob{tokokaryaClient: tokokaryaClient, logger: logger}
 }
 
@@ -49,7 +50,7 @@ func (j *CancelExpiredOrderJob) ProcessTask(ctx context.Context, t *asynq.Task) 
 		return fmt.Errorf("unmarshal payload: %w", asynq.SkipRetry)
 	}
 
-	log := j.logger.WithFields(logrus.Fields{
+	log := j.logger.WithFields(ctx, logrus.Fields{
 		"component":    "cancel_expired_order_job",
 		"order_number": p.OrderNumber,
 	})

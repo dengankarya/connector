@@ -6,6 +6,7 @@ import (
 
 	"github.com/dengankarya/connector/internal/payment/domain"
 	"github.com/dengankarya/connector/internal/payment/repository"
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/sirupsen/logrus"
@@ -16,14 +17,15 @@ import (
 type ReplayService struct {
 	eventRepo *repository.WebhookEventRepository
 	enqueuer  *asynq.Client
-	logger    *logrus.Logger
+	logger    *logger.Logger
 }
 
 // NewReplayService creates a ReplayService.
 func NewReplayService(
 	eventRepo *repository.WebhookEventRepository,
 	enqueuer *asynq.Client,
-	logger *logrus.Logger,
+	logger *logger.Logger,
+
 ) *ReplayService {
 	return &ReplayService{
 		eventRepo: eventRepo,
@@ -39,7 +41,7 @@ func NewReplayService(
 //   - If force=true the event status is reset and re-enqueued.
 //   - The Processor.Process() path enforces full idempotency (SELECT FOR UPDATE + reference_id).
 func (s *ReplayService) ReplayEvent(ctx context.Context, eventID uuid.UUID, force bool) error {
-	log := s.logger.WithFields(logrus.Fields{
+	log := s.logger.WithFields(ctx, logrus.Fields{
 		"component":        "webhook_replay",
 		"webhook_event_id": eventID,
 		"force":            force,
@@ -79,7 +81,7 @@ func (s *ReplayService) ReplayFailed(ctx context.Context, limit int) (int, error
 	var count int
 	for _, e := range events {
 		if err := s.ReplayEvent(ctx, e.ID, false); err != nil {
-			s.logger.WithFields(logrus.Fields{
+			s.logger.WithFields(ctx, logrus.Fields{
 				"webhook_event_id": e.ID,
 				"error":            err.Error(),
 			}).Error("replay_failed: failed to replay event")
@@ -88,7 +90,7 @@ func (s *ReplayService) ReplayFailed(ctx context.Context, limit int) (int, error
 		count++
 	}
 
-	s.logger.WithFields(logrus.Fields{
+	s.logger.WithFields(ctx, logrus.Fields{
 		"requested": limit,
 		"replayed":  count,
 		"total":     len(events),
@@ -102,6 +104,6 @@ func (s *ReplayService) MarkDeadLettered(ctx context.Context, eventID uuid.UUID)
 	if err := s.eventRepo.UpdateStatus(ctx, eventID, domain.WebhookStatusDeadLettered, "max retries exhausted"); err != nil {
 		return fmt.Errorf("mark dead lettered: %w", err)
 	}
-	s.logger.WithField("webhook_event_id", eventID).Warn("webhook event moved to dead_lettered")
+	s.logger.WithField(ctx, "webhook_event_id", eventID).Warn("webhook event moved to dead_lettered")
 	return nil
 }

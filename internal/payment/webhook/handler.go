@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/sirupsen/logrus"
@@ -22,11 +23,11 @@ type ProcessWebhookPayload struct {
 // AsynqHandler is the asynq task handler for TaskProcessWebhookEvent.
 type AsynqHandler struct {
 	processor *Processor
-	logger    *logrus.Logger
+	logger    *logger.Logger
 }
 
 // NewAsynqHandler creates an AsynqHandler.
-func NewAsynqHandler(processor *Processor, logger *logrus.Logger) *AsynqHandler {
+func NewAsynqHandler(processor *Processor, logger *logger.Logger) *AsynqHandler {
 	return &AsynqHandler{processor: processor, logger: logger}
 }
 
@@ -35,20 +36,20 @@ func (h *AsynqHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	var p ProcessWebhookPayload
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		// Non-retryable: malformed payload will never recover.
-		h.logger.WithError(err).Error("webhook task: unmarshal payload failed")
+		h.logger.WithError(ctx, err).Error("webhook task: unmarshal payload failed")
 		return fmt.Errorf("unmarshal payload: %w", asynq.SkipRetry)
 	}
 
 	eventID, err := uuid.Parse(p.WebhookEventID)
 	if err != nil {
-		h.logger.WithField("raw_id", p.WebhookEventID).Error("webhook task: invalid event UUID")
+		h.logger.WithField(ctx, "raw_id", p.WebhookEventID).Error("webhook task: invalid event UUID")
 		return fmt.Errorf("invalid event id %q: %w", p.WebhookEventID, asynq.SkipRetry)
 	}
 
-	h.logger.WithField("webhook_event_id", eventID).Info("webhook task: processing")
+	h.logger.WithField(ctx, "webhook_event_id", eventID).Info("webhook task: processing")
 
 	if err := h.processor.Process(ctx, eventID); err != nil {
-		h.logger.WithFields(logrus.Fields{
+		h.logger.WithFields(ctx, logrus.Fields{
 			"webhook_event_id": eventID,
 			"error":            err.Error(),
 		}).Error("webhook task: processing failed")

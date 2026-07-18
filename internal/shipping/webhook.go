@@ -12,6 +12,7 @@ import (
 	"github.com/dengankarya/connector/internal/shipping/domain"
 	"github.com/dengankarya/connector/internal/shipping/repository"
 	"github.com/dengankarya/connector/pkg/biteship"
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/gofiber/fiber/v3"
 	log "github.com/sirupsen/logrus"
 )
@@ -46,7 +47,7 @@ type webhookController struct {
 	repo           *repository.ShipmentRepository // may be nil
 	forwarder      ShipmentWebhookForwarder       // may be nil
 	accountManager domain.AccountManager          // may be nil
-	logger         *log.Logger
+	logger         *logger.Logger
 }
 
 // RegisterWebhookHandler registers the public Biteship webhook endpoint on the root app
@@ -58,7 +59,7 @@ func RegisterWebhookHandler(
 	repo *repository.ShipmentRepository,
 	forwarder ShipmentWebhookForwarder,
 	accountManager domain.AccountManager,
-	logger *log.Logger,
+	logger *logger.Logger,
 ) {
 	ctrl := webhookController{
 		signatureKey:   signatureKey,
@@ -84,7 +85,7 @@ func (ctrl *webhookController) handleWebhook(c fiber.Ctx) error {
 	// Validate signature header when configured.
 	if ctrl.signatureKey != "" && ctrl.signatureValue != "" {
 		if c.Get(ctrl.signatureKey) != ctrl.signatureValue {
-			ctrl.logger.Warn("invalid biteship webhook signature")
+			ctrl.logger.Warn(c.Context(), "invalid biteship webhook signature", nil)
 			return c.Status(http.StatusOK).JSON(common.Response{Status: "OK"})
 		}
 	}
@@ -94,11 +95,11 @@ func (ctrl *webhookController) handleWebhook(c fiber.Ctx) error {
 
 	eventType, err := parseWebhookEventType(body)
 	if err != nil {
-		ctrl.logger.WithError(err).Error("failed to parse biteship webhook event type")
+		ctrl.logger.WithError(c.Context(), err).Error("failed to parse biteship webhook event type")
 		return c.Status(http.StatusOK).JSON(common.Response{Status: "OK"})
 	}
 
-	ctrl.logger.WithField("event", eventType).Info("received biteship webhook")
+	ctrl.logger.WithField(c.Context(), "event", eventType).Info("received biteship webhook")
 
 	// Process event, update DB, and get the updated shipment back.
 	var updated *domain.Shipment
@@ -106,7 +107,7 @@ func (ctrl *webhookController) handleWebhook(c fiber.Ctx) error {
 	if ctrl.repo != nil {
 		updated, oldPrice, err = ctrl.processEventWithOldPrice(c.Context(), eventType, body)
 		if err != nil {
-			ctrl.logger.WithError(err).WithField("event", eventType).Error("failed to process biteship webhook")
+			ctrl.logger.WithError(c.Context(), err).WithField("event", eventType).Error("failed to process biteship webhook")
 		}
 	}
 
@@ -115,13 +116,13 @@ func (ctrl *webhookController) handleWebhook(c fiber.Ctx) error {
 	if ctrl.forwarder != nil && updated != nil {
 		payload, merr := buildForwardPayload(updated, eventType, oldPrice)
 		if merr != nil {
-			ctrl.logger.WithError(merr).Error("failed to build biteship forward payload")
+			ctrl.logger.WithError(c.Context(), merr).Error("failed to build biteship forward payload")
 		} else {
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 				if err := ctrl.forwarder.ForwardShipmentWebhook(ctx, payload); err != nil {
-					ctrl.logger.WithError(err).Error("failed to forward biteship webhook to tokokarya")
+					ctrl.logger.WithError(ctx, err).Error("failed to forward biteship webhook to tokokarya")
 				}
 			}()
 		}
@@ -236,14 +237,14 @@ func (ctrl *webhookController) handleOrderStatus(ctx context.Context, body []byt
 		switch evt.Status {
 		case "confirmed", "scheduled":
 			if err := ctrl.accountManager.ConfirmHoldForOrder(ctx, s.TenantID, s.OrderNumber, s.ShippingCost); err != nil {
-				ctrl.logger.WithError(err).WithFields(log.Fields{
+				ctrl.logger.WithError(ctx, err).WithFields(log.Fields{
 					"order_number": s.OrderNumber,
 					"tenant_id":    s.TenantID,
 				}).Error("failed to confirm shipping hold on order confirmed")
 			}
 		case "cancelled":
 			if err := ctrl.accountManager.ReleaseHoldForOrder(ctx, s.TenantID, s.OrderNumber); err != nil {
-				ctrl.logger.WithError(err).WithFields(log.Fields{
+				ctrl.logger.WithError(ctx, err).WithFields(log.Fields{
 					"order_number": s.OrderNumber,
 					"tenant_id":    s.TenantID,
 				}).Error("failed to release shipping hold on order cancelled")
@@ -288,7 +289,7 @@ func (ctrl *webhookController) handleOrderPriceWithOldPrice(ctx context.Context,
 	// Only deduct when price increased and shipment is confirmed (not draft).
 	if ctrl.accountManager != nil && evt.Price > oldPrice && s.Status != domain.ShipmentStatusDraft {
 		if err := ctrl.accountManager.AdjustShippingBalance(ctx, s.TenantID, oldPrice, evt.Price, "IDR", s.OrderNumber); err != nil {
-			ctrl.logger.WithError(err).WithFields(log.Fields{
+			ctrl.logger.WithError(ctx, err).WithFields(log.Fields{
 				"tenant_id":    s.TenantID,
 				"order_number": s.OrderNumber,
 				"old_price":    oldPrice,

@@ -6,8 +6,8 @@ import (
 
 	"github.com/dengankarya/connector/common"
 	"github.com/dengankarya/connector/internal/account"
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/google/uuid"
-	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -16,11 +16,11 @@ type Service struct {
 	repo       *Repository
 	accountSvc *account.Service
 	secret     string
-	logger     *logrus.Logger
+	logger     *logger.Logger
 }
 
 // NewService creates a Service.
-func NewService(repo *Repository, accountSvc *account.Service, secret string, logger *logrus.Logger) *Service {
+func NewService(repo *Repository, accountSvc *account.Service, secret string, logger *logger.Logger) *Service {
 	return &Service{repo: repo, accountSvc: accountSvc, secret: secret, logger: logger}
 }
 
@@ -43,7 +43,7 @@ func (s *Service) Login(ctx context.Context, email, password string) (*LoginResp
 	if err != nil {
 		return nil, fmt.Errorf("login: issue token: %w", err)
 	}
-	s.logger.WithField("admin_id", user.ID).Info("admin login")
+	s.logger.WithField(ctx, "admin_id", user.ID).Info("admin login")
 	return &LoginResponse{Token: token}, nil
 }
 
