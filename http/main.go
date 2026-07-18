@@ -76,18 +76,17 @@ func main() {
 	appLogger := logger.New(log.StandardLogger())
 
 	if cfg.PosthogProjectToken != "" {
-		otelProvider, err := logger.InitOtelProvider(context.Background(), cfg.PosthogEndpoint, cfg.PosthogProjectToken, cfg.PosthogServiceName)
+		otelHook, otelShutdown, err := logger.NewOtelLogrusHook(logger.OtelHookConfig{
+			Endpoint:     cfg.PosthogEndpoint,
+			ProjectToken: cfg.PosthogProjectToken,
+			ServiceName:  cfg.PosthogServiceName,
+		})
 		if err != nil {
-			log.WithError(err).Fatal("failed to initialize OTEL provider")
+			log.WithError(err).Fatal("failed to setup PostHog OTEL hook")
 		}
-		defer func() {
-			if err := otelProvider.Shutdown(context.Background()); err != nil {
-				log.WithError(err).Error("failed to shutdown OTEL provider")
-			}
-		}()
+		defer otelShutdown()
 
-		otelLogger := otelProvider.Logger(cfg.PosthogServiceName)
-		log.AddHook(logger.NewOtelLogrusHook(otelLogger))
+		log.AddHook(otelHook)
 		log.Info("PostHog OpenTelemetry logging enabled")
 	}
 
