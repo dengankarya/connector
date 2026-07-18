@@ -14,6 +14,7 @@ import (
 	"github.com/dengankarya/connector/internal/payment/ledger"
 	"github.com/dengankarya/connector/internal/payment/provider"
 	"github.com/dengankarya/connector/internal/payment/repository"
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
@@ -71,7 +72,7 @@ type PaymentService struct {
 	ledger        *ledger.Service
 	txRunner      *repository.TxRunner
 	gatewayFinder GatewayAccountFinder // optional; nil = skip sub-account lookup
-	logger        *logrus.Logger
+	logger        logger.Logger
 }
 
 // NewPaymentService creates a PaymentService.
@@ -81,7 +82,7 @@ func NewPaymentService(
 	txRunner *repository.TxRunner,
 	ledgerSvc *ledger.Service,
 	gatewayFinder GatewayAccountFinder,
-	logger *logrus.Logger,
+	logger logger.Logger,
 ) *PaymentService {
 	return &PaymentService{
 		txnRepo:       txnRepo,
@@ -126,7 +127,7 @@ type CreateManualPaymentRequest struct {
 // CreateManualPayment records a payment transaction without calling any external provider.
 // The returned transaction has provider="manual_transfer". Confirm via POST /api/payments/manual/:id/confirm.
 func (s *PaymentService) CreateManualPayment(ctx context.Context, req CreateManualPaymentRequest) (*domain.PaymentTransaction, error) {
-	log := s.logger.WithFields(logrus.Fields{
+	log := s.logger.WithFields(ctx, logrus.Fields{
 		"component":       "payment_service",
 		"operation":       "create_manual_payment",
 		"tenant_id":       req.TenantID,
@@ -192,7 +193,7 @@ type ConfirmManualPaymentRequest struct {
 // writes ledger entries, and returns the updated transaction.
 // Idempotent: returns the transaction as-is if it is already paid.
 func (s *PaymentService) ConfirmManualPayment(ctx context.Context, req ConfirmManualPaymentRequest) (*domain.PaymentTransaction, error) {
-	log := s.logger.WithFields(logrus.Fields{
+	log := s.logger.WithFields(ctx, logrus.Fields{
 		"component":      "payment_service",
 		"operation":      "confirm_manual_payment",
 		"tenant_id":      req.TenantID,
@@ -303,7 +304,7 @@ type CreateProviderPaymentRequest struct {
 //
 // Idempotent: if (tenant_id, idempotency_key) already exists, returns domain.ErrDuplicateIdempotencyKey.
 func (s *PaymentService) CreateProviderPayment(ctx context.Context, prov provider.PaymentProvider, req CreateProviderPaymentRequest) (*domain.PaymentTransaction, error) {
-	log := s.logger.WithFields(logrus.Fields{
+	log := s.logger.WithFields(ctx, logrus.Fields{
 		"component":       "payment_service",
 		"operation":       "create_provider_payment",
 		"provider":        prov.ProviderName(),

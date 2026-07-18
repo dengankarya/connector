@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dengankarya/connector/common"
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/dengankarya/connector/pkg/postgres"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -18,11 +19,11 @@ import (
 type Service struct {
 	repo     *Repository
 	txRunner *postgres.TxRunner
-	logger   *logrus.Logger
+	logger   logger.Logger
 }
 
 // NewService creates a Service.
-func NewService(repo *Repository, txRunner *postgres.TxRunner, logger *logrus.Logger) *Service {
+func NewService(repo *Repository, txRunner *postgres.TxRunner, logger logger.Logger) *Service {
 	return &Service{repo: repo, txRunner: txRunner, logger: logger}
 }
 
@@ -169,7 +170,7 @@ func (s *Service) Topup(ctx context.Context, req TopupRequest) (*ShippingTopup, 
 	if err != nil {
 		return nil, err
 	}
-	s.logger.WithFields(logrus.Fields{
+	s.logger.WithFields(ctx, logrus.Fields{
 		"component": "account",
 		"tenant_id": req.TenantID,
 		"amount":    req.Amount,
@@ -211,7 +212,7 @@ func (s *Service) AdjustShippingBalance(ctx context.Context, tenantID int64, old
 	if err != nil {
 		return err
 	}
-	s.logger.WithFields(logrus.Fields{
+	s.logger.WithFields(ctx, logrus.Fields{
 		"component":    "account",
 		"tenant_id":    tenantID,
 		"order_number": orderNumber,
@@ -257,7 +258,7 @@ func (s *Service) CreateHold(ctx context.Context, req CreateHoldRequest) (*Shipp
 	if err != nil {
 		return nil, err
 	}
-	s.logger.WithFields(logrus.Fields{
+	s.logger.WithFields(ctx, logrus.Fields{
 		"component":    "account",
 		"tenant_id":    req.TenantID,
 		"order_number": req.OrderNumber,
@@ -295,7 +296,7 @@ func (s *Service) ConfirmHold(ctx context.Context, tenantID int64, holdID uuid.U
 	if err != nil {
 		return nil, err
 	}
-	s.logger.WithFields(logrus.Fields{
+	s.logger.WithFields(ctx, logrus.Fields{
 		"component": "account",
 		"tenant_id": tenantID,
 		"hold_id":   holdID,
@@ -332,7 +333,7 @@ func (s *Service) ReleaseHold(ctx context.Context, tenantID int64, holdID uuid.U
 	if err != nil {
 		return nil, err
 	}
-	s.logger.WithFields(logrus.Fields{
+	s.logger.WithFields(ctx, logrus.Fields{
 		"component": "account",
 		"tenant_id": tenantID,
 		"hold_id":   holdID,
@@ -437,7 +438,7 @@ func (s *Service) RequestPayout(ctx context.Context, tenantID int64, body Payout
 		Description:   body.Description,
 	}
 	if err := s.repo.InsertPayoutRequest(ctx, req); err != nil {
-		s.logger.WithError(err).WithField("tenant_id", tenantID).Error("insert payout request failed")
+		s.logger.WithError(ctx, err).WithField("tenant_id", tenantID).Error("insert payout request failed")
 		return nil, fmt.Errorf("create payout request: %w", err)
 	}
 	return req, nil

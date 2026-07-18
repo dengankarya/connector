@@ -7,6 +7,7 @@ import (
 
 	"github.com/dengankarya/connector/internal/payment/domain"
 	"github.com/dengankarya/connector/internal/payment/repository"
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/sirupsen/logrus"
 )
 
@@ -17,14 +18,14 @@ const expirePaymentsBatchSize = 100
 type ExpirePaymentsJob struct {
 	txnRepo  *repository.TransactionRepository
 	txRunner *repository.TxRunner
-	logger   *logrus.Logger
+	logger   logger.Logger
 }
 
 // NewExpirePaymentsJob creates an ExpirePaymentsJob.
 func NewExpirePaymentsJob(
 	txnRepo *repository.TransactionRepository,
 	txRunner *repository.TxRunner,
-	logger *logrus.Logger,
+	logger logger.Logger,
 ) *ExpirePaymentsJob {
 	return &ExpirePaymentsJob{txnRepo: txnRepo, txRunner: txRunner, logger: logger}
 }
@@ -33,7 +34,7 @@ func NewExpirePaymentsJob(
 // Uses SKIP LOCKED so multiple concurrent job instances never step on each other.
 func (j *ExpirePaymentsJob) Run(ctx context.Context) error {
 	start := time.Now()
-	log := j.logger.WithField("component", "expire_payments_job")
+	log := j.logger.WithField(ctx, "component", "expire_payments_job")
 
 	// Each transaction is processed in its own mini-transaction to limit lock scope.
 	txns, err := j.txnRepo.ListExpired(ctx, expirePaymentsBatchSize)

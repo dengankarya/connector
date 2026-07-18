@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/dengankarya/connector/internal/payment/webhook"
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/sirupsen/logrus"
 )
 
@@ -15,18 +16,18 @@ const retryWebhooksBatchSize = 50
 // Run every 10 minutes via the asynq periodic task scheduler.
 type RetryWebhooksJob struct {
 	replay *webhook.ReplayService
-	logger *logrus.Logger
+	logger logger.Logger
 }
 
 // NewRetryWebhooksJob creates a RetryWebhooksJob.
-func NewRetryWebhooksJob(replay *webhook.ReplayService, logger *logrus.Logger) *RetryWebhooksJob {
+func NewRetryWebhooksJob(replay *webhook.ReplayService, logger logger.Logger) *RetryWebhooksJob {
 	return &RetryWebhooksJob{replay: replay, logger: logger}
 }
 
 // Run replays up to retryWebhooksBatchSize failed webhook events.
 func (j *RetryWebhooksJob) Run(ctx context.Context) error {
 	start := time.Now()
-	log := j.logger.WithField("component", "retry_webhooks_job")
+	log := j.logger.WithField(ctx, "component", "retry_webhooks_job")
 
 	count, err := j.replay.ReplayFailed(ctx, retryWebhooksBatchSize)
 	if err != nil {

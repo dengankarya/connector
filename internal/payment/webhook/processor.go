@@ -11,6 +11,7 @@ import (
 	"github.com/dengankarya/connector/internal/payment/domain"
 	"github.com/dengankarya/connector/internal/payment/ledger"
 	"github.com/dengankarya/connector/internal/payment/repository"
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
@@ -44,7 +45,7 @@ type Processor struct {
 	ledger    *ledger.Service
 	txRunner  *repository.TxRunner
 	forwarder PaymentForwarder // optional; if nil Tokokarya forwarding is skipped
-	logger    *logrus.Logger
+	logger    logger.Logger
 }
 
 // NewProcessor creates a Processor with all required dependencies.
@@ -55,7 +56,7 @@ func NewProcessor(
 	ledgerSvc *ledger.Service,
 	txRunner *repository.TxRunner,
 	forwarder PaymentForwarder,
-	logger *logrus.Logger,
+	logger logger.Logger,
 ) *Processor {
 	return &Processor{
 		eventRepo: eventRepo,
@@ -74,7 +75,7 @@ func NewProcessor(
 // Safe to call multiple times — idempotency is enforced at every step.
 func (p *Processor) Process(ctx context.Context, eventID uuid.UUID) error {
 	start := time.Now()
-	log := p.logger.WithFields(logrus.Fields{
+	log := p.logger.WithFields(ctx, logrus.Fields{
 		"component":        "webhook_processor",
 		"webhook_event_id": eventID,
 	})
@@ -356,7 +357,7 @@ func (p *Processor) handleFailed(ctx context.Context, _ *domain.WebhookEvent, tx
 // Used by the dp-sync endpoint when DurianPay confirms payment but the webhook hasn't fired yet.
 // Idempotent: returns nil if the transaction is already paid.
 func (p *Processor) ConfirmGatewayPayment(ctx context.Context, tenantID int64, txnID uuid.UUID, paidAt *time.Time) (*domain.PaymentTransaction, error) {
-	log := p.logger.WithFields(logrus.Fields{
+	log := p.logger.WithFields(ctx, logrus.Fields{
 		"component":      "webhook_processor",
 		"operation":      "confirm_gateway_payment",
 		"tenant_id":      tenantID,

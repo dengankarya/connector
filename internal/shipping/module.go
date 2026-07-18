@@ -4,8 +4,8 @@ import (
 	"github.com/dengankarya/connector/internal/shipping/domain"
 	"github.com/dengankarya/connector/internal/shipping/provider"
 	shipmentrepo "github.com/dengankarya/connector/internal/shipping/repository"
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/sirupsen/logrus"
 )
 
 // Module contains all shipping-related services.
@@ -21,7 +21,7 @@ func NewModule(
 	logisticsClient LogisticAggregator,
 	shippingProvider provider.ShippingProvider,
 	accountManager domain.AccountManager,
-	logger *logrus.Logger,
+	logger logger.Logger,
 ) *Module {
 	var shipmentRepo *shipmentrepo.ShipmentRepository
 	if pool != nil {

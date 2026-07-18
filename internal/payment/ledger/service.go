@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/dengankarya/connector/internal/payment/domain"
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
@@ -23,11 +24,11 @@ type Repository interface {
 // Service writes balanced double-entry journals to the ledger.
 type Service struct {
 	repo   Repository
-	logger *logrus.Logger
+	logger logger.Logger
 }
 
 // New creates a ledger Service.
-func New(repo Repository, logger *logrus.Logger) *Service {
+func New(repo Repository, logger logger.Logger) *Service {
 	return &Service{repo: repo, logger: logger}
 }
 
@@ -260,7 +261,7 @@ func (s *Service) write(ctx context.Context, j *domain.LedgerJournal, txnID uuid
 		return fmt.Errorf("ledger: %s: %w", op, err)
 	}
 
-	log := s.logger.WithFields(logrus.Fields{
+	log := s.logger.WithFields(ctx, logrus.Fields{
 		"component":      "ledger",
 		"operation":      op,
 		"transaction_id": txnID,

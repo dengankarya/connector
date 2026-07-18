@@ -7,6 +7,7 @@ import (
 	"github.com/dengankarya/connector/internal/payment/domain"
 	"github.com/dengankarya/connector/internal/payment/provider"
 	"github.com/dengankarya/connector/internal/payment/repository"
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/gofiber/fiber/v3"
 	"github.com/hibiken/asynq"
 	"github.com/sirupsen/logrus"
@@ -33,12 +34,12 @@ func RegisterIngestHandler(
 	eventRepo *repository.WebhookEventRepository,
 	logRepo *repository.WebhookRequestLogRepository,
 	enqueuer *asynq.Client,
-	logger *logrus.Logger,
+	logger logger.Logger,
 	accountHandler AccountEventHandler,
 ) {
 	mux.Post(route, func(c fiber.Ctx) error {
 		ctx := c.Context()
-		log := logger.WithFields(logrus.Fields{
+		log := logger.WithFields(ctx, logrus.Fields{
 			"component": "webhook_ingest",
 			"provider":  prov.ProviderName(),
 			"route":     route,

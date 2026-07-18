@@ -13,6 +13,7 @@ import (
 	"github.com/dengankarya/connector/internal/payment/provider"
 	paymentservice "github.com/dengankarya/connector/internal/payment/service"
 	"github.com/dengankarya/connector/internal/payment/webhook"
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -26,7 +27,7 @@ type paymentController struct {
 	providers        map[string]provider.PaymentProvider // keyed by provider name (e.g. "durianpay")
 	enqueuer         *asynq.Client
 	webhookProcessor *webhook.Processor // optional; used by dp-sync to confirm payment + record ledger
-	logger           *logrus.Logger
+	logger           logger.Logger
 }
 
 // RegisterPaymentHandlers registers the payment transaction endpoints.
@@ -37,7 +38,7 @@ func RegisterPaymentHandlers(
 	svc *paymentservice.PaymentService,
 	providers map[string]provider.PaymentProvider,
 	enqueuer *asynq.Client,
-	logger *logrus.Logger,
+	logger logger.Logger,
 	webhookProc ...*webhook.Processor,
 ) {
 	var wp *webhook.Processor
@@ -161,7 +162,7 @@ func (ctrl *paymentController) createPayment(c fiber.Ctx) error {
 				Status: "Conflict", Error: "a transaction with this idempotency_key already exists",
 			})
 		}
-		ctrl.logger.WithError(err).Error("create payment failed")
+		ctrl.logger.WithError(c.Context(), err).Error("create payment failed")
 		return c.Status(http.StatusInternalServerError).JSON(common.Response{
 			Status: "Internal Server Error", Error: err.Error(),
 		})
@@ -284,7 +285,7 @@ func (ctrl *paymentController) createManualPayment(c fiber.Ctx) error {
 				Status: "Conflict", Error: "a transaction with this idempotency_key already exists",
 			})
 		}
-		ctrl.logger.WithError(err).Error("create manual payment failed")
+		ctrl.logger.WithError(c.Context(), err).Error("create manual payment failed")
 		return c.Status(http.StatusInternalServerError).JSON(common.Response{
 			Status: "Internal Server Error", Error: err.Error(),
 		})
@@ -342,7 +343,7 @@ func (ctrl *paymentController) confirmManualPayment(c fiber.Ctx) error {
 				Status: "Not Found", Error: nf.Error(),
 			})
 		}
-		ctrl.logger.WithError(err).Error("confirm manual payment failed")
+		ctrl.logger.WithError(c.Context(), err).Error("confirm manual payment failed")
 		return c.Status(http.StatusInternalServerError).JSON(common.Response{
 			Status: "Internal Server Error", Error: err.Error(),
 		})
@@ -388,7 +389,7 @@ func (ctrl *paymentController) scheduleOrderCancellation(c fiber.Ctx) error {
 	task, opts := jobs.NewCancelExpiredOrderTask(body.OrderNumber, processAt)
 
 	if _, err := ctrl.enqueuer.EnqueueContext(c.Context(), task, opts...); err != nil {
-		ctrl.logger.WithFields(logrus.Fields{
+		ctrl.logger.WithFields(c.Context(), logrus.Fields{
 			"order_number":     body.OrderNumber,
 			"should_expire_at": body.ShouldExpireAt,
 			"error":            err.Error(),
@@ -465,7 +466,7 @@ func (ctrl *paymentController) syncDurianPay(c fiber.Ctx) error {
 
 	inv, err := prov.GetInvoice(c.Context(), txn.ProviderInvoiceID)
 	if err != nil {
-		ctrl.logger.WithError(err).WithField("provider_invoice_id", txn.ProviderInvoiceID).
+		ctrl.logger.WithError(c.Context(), err).WithField("provider_invoice_id", txn.ProviderInvoiceID).
 			Error("dp-sync: GetInvoice failed")
 		return c.Status(http.StatusInternalServerError).JSON(common.Response{
 			Status: "Internal Server Error", Error: "failed to fetch payment status from DurianPay",
@@ -477,7 +478,7 @@ func (ctrl *paymentController) syncDurianPay(c fiber.Ctx) error {
 	if inv.Status == "paid" && txn.Status == domain.StatusAwaitingPayment && ctrl.webhookProcessor != nil {
 		updated, cerr := ctrl.webhookProcessor.ConfirmGatewayPayment(c.Context(), tenantID, txn.ID, inv.PaidAt)
 		if cerr != nil {
-			ctrl.logger.WithError(cerr).Error("dp-sync: ConfirmGatewayPayment failed")
+			ctrl.logger.WithError(c.Context(), cerr).Error("dp-sync: ConfirmGatewayPayment failed")
 			// Non-fatal: return the dp status so the frontend can still react.
 		} else if updated != nil {
 			txn = updated

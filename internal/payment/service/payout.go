@@ -9,6 +9,7 @@ import (
 	"github.com/dengankarya/connector/internal/payment/ledger"
 	"github.com/dengankarya/connector/internal/payment/provider"
 	"github.com/dengankarya/connector/internal/payment/repository"
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
@@ -33,7 +34,7 @@ type PayoutService struct {
 	ledgerSvc  *ledger.Service
 	prov       provider.PaymentProvider
 	txRunner   *repository.TxRunner
-	logger     *logrus.Logger
+	logger     logger.Logger
 }
 
 // NewPayoutService creates a PayoutService.
@@ -43,7 +44,7 @@ func NewPayoutService(
 	ledgerSvc *ledger.Service,
 	prov provider.PaymentProvider,
 	txRunner *repository.TxRunner,
-	logger *logrus.Logger,
+	logger logger.Logger,
 ) *PayoutService {
 	return &PayoutService{
 		payoutRepo: payoutRepo,
@@ -58,7 +59,7 @@ func NewPayoutService(
 // CreatePayout creates a payout record and dispatches it to the provider.
 // The ledger entry is written inside the same DB transaction as the payout row.
 func (s *PayoutService) CreatePayout(ctx context.Context, req CreatePayoutRequest) (*domain.Payout, error) {
-	log := s.logger.WithFields(logrus.Fields{
+	log := s.logger.WithFields(ctx, logrus.Fields{
 		"component": "payout_service",
 		"tenant_id": req.TenantID,
 		"amount":    req.Amount,
@@ -102,7 +103,7 @@ func (s *PayoutService) DispatchPayout(ctx context.Context, payoutID uuid.UUID) 
 		}
 
 		if payout.Status != domain.PayoutStatusPending {
-			s.logger.WithFields(logrus.Fields{
+			s.logger.WithFields(ctx, logrus.Fields{
 				"payout_id": payoutID,
 				"status":    payout.Status,
 			}).Warn("dispatch payout: skipping non-pending payout")
@@ -144,7 +145,7 @@ func (s *PayoutService) DispatchPayout(ctx context.Context, payoutID uuid.UUID) 
 			return fmt.Errorf("update payout to completed: %w", err)
 		}
 
-		s.logger.WithFields(logrus.Fields{
+		s.logger.WithFields(ctx, logrus.Fields{
 			"payout_id":          payoutID,
 			"provider_payout_id": result.ProviderPayoutID,
 			"amount":             payout.Amount,

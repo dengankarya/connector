@@ -38,6 +38,10 @@ type Configuration struct {
 	WebhookBaseURL string `env:"WEBHOOK_BASE_URL"` // base URL for webhook notifications (e.g. https://connector.example.com)
 
 	AdminJWTSecret string `env:"ADMIN_JWT_SECRET"` // HMAC secret for platform-admin JWT tokens
+
+	PosthogProjectToken string `env:"POSTHOG_PROJECT_TOKEN"`
+	PosthogEndpoint     string `env:"POSTHOG_ENDPOINT" envDefault:"https://us.i.posthog.com"`
+	PosthogServiceName  string `env:"POSTHOG_SERVICE_NAME" envDefault:"connector-api"`
 }
 
 func (c Configuration) IsThisRequestAuthenticated(apiKey string) bool {

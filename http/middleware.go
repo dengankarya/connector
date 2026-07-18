@@ -76,6 +76,22 @@ func adminJWTAuth(secret string) fiber.Handler {
 	}
 }
 
+// func requestIDMiddleware() fiber.Handler {
+// 	return func(c fiber.Ctx) error {
+// 		reqID := string(c.Request().Header.Peek("X-Request-ID"))
+// 		if reqID == "" {
+// 			reqID = uuid.New().String()
+// 		}
+
+// 		c.Set("X-Request-ID", reqID)
+
+// 		ctx := context.WithValue(c.Context(), logger.RequestIDKey, reqID)
+// 		c.SetContext(ctx)
+
+// 		return c.Next()
+// 	}
+// }
+
 func requestLogger() fiber.Handler {
 	return func(c fiber.Ctx) error {
 		start := time.Now()

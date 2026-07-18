@@ -2,8 +2,8 @@ package admin
 
 import (
 	"github.com/dengankarya/connector/internal/account"
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/sirupsen/logrus"
 )
 
 // Module wires together the admin service and exposes route registration helpers.
@@ -17,7 +17,7 @@ func NewModule(
 	pool *pgxpool.Pool,
 	accountSvc *account.Service,
 	secret string,
-	logger *logrus.Logger,
+	logger logger.Logger,
 ) *Module {
 	if pool == nil {
 		return &Module{}

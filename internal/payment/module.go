@@ -7,9 +7,9 @@ import (
 	"github.com/dengankarya/connector/internal/payment/repository"
 	paymentservice "github.com/dengankarya/connector/internal/payment/service"
 	"github.com/dengankarya/connector/internal/payment/webhook"
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/sirupsen/logrus"
 )
 
 // Module contains all payment-related services and repositories.
@@ -38,7 +38,7 @@ func NewModule(
 	providers map[string]provider.PaymentProvider,
 	accountFinder paymentservice.GatewayAccountFinder,
 	forwarder webhook.PaymentForwarder,
-	logger *logrus.Logger,
+	logger logger.Logger,
 ) *Module {
 	if pool == nil {
 		return &Module{Providers: providers}

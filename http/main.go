@@ -32,6 +32,7 @@ import (
 	"github.com/dengankarya/connector/pkg/dbconn"
 	"github.com/dengankarya/connector/pkg/durianpay"
 	"github.com/dengankarya/connector/pkg/geoapify"
+	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/dengankarya/connector/pkg/tokokarya"
 	"github.com/dengankarya/connector/pkg/wilayah"
 	"github.com/golang-migrate/migrate/v4"
@@ -72,6 +73,22 @@ func main() {
 	log.Info("starting overwatch http handler...")
 
 	cfg := config.ParseENV()
+	appLogger := logger.New(log.StandardLogger())
+
+	if cfg.PosthogProjectToken != "" {
+		otelHook, otelShutdown, err := logger.NewOtelLogrusHook(logger.OtelHookConfig{
+			Endpoint:     cfg.PosthogEndpoint,
+			ProjectToken: cfg.PosthogProjectToken,
+			ServiceName:  cfg.PosthogServiceName,
+		})
+		if err != nil {
+			log.WithError(err).Fatal("failed to setup PostHog OTEL hook")
+		}
+		defer otelShutdown()
+
+		log.AddHook(otelHook)
+		log.Info("PostHog OpenTelemetry logging enabled")
+	}
 
 	// ── Tokokarya client — payment webhook forwarding ────────────────────────
 	var tokokaryaClient *tokokarya.Client
@@ -100,7 +117,7 @@ func main() {
 		defer pool.Close()
 
 		if cfg.DurianPayAPIKey != "" {
-			durianpayClient = durianpay.NewClient(cfg.DurianPayAPIKey, cfg.DurianPayBaseURL, log.StandardLogger())
+			durianpayClient = durianpay.NewClient(cfg.DurianPayAPIKey, cfg.DurianPayBaseURL, appLogger)
 		}
 	}
 
@@ -119,21 +136,21 @@ func main() {
 	}
 
 	// Wire modules (payment, account, shipping) with all their components
-	paymentMod = payment.NewModule(pool, asynqClient, paymentProviders, nil, tokokaryaClient, log.StandardLogger())
-	accountMod = account.NewModule(pool, paymentMod.TxRunner, log.StandardLogger())
+	paymentMod = payment.NewModule(pool, asynqClient, paymentProviders, nil, tokokaryaClient, appLogger)
+	accountMod = account.NewModule(pool, paymentMod.TxRunner, appLogger)
 
 	// Biteship client setup for shipping
 	var biteshipClient *biteship.Client
 	if cfg.BiteshipAPIKey != "" {
 		biteshipClient = biteship.NewClient(cfg.BiteshipAPIKey, cfg.BiteshipBaseURL)
 	}
-	shippingMod = shipping.NewModule(pool, biteshipClient, biteshipClient, accountMod.Service, log.StandardLogger())
+	shippingMod = shipping.NewModule(pool, biteshipClient, biteshipClient, accountMod.Service, appLogger)
 
 	workerServer := worker.NewServer(cfg.RedisURL)
 	workerMux := worker.NewMux(worker.MuxOptions{
 		WebhookEventHandler: paymentMod.WebhookHandler, // nil-safe: NewMux checks for nil
 	})
-	cancelExpiredJob = jobs.NewCancelExpiredOrderJob(tokokaryaClient, log.StandardLogger())
+	cancelExpiredJob = jobs.NewCancelExpiredOrderJob(tokokaryaClient, appLogger)
 	workerMux.HandleFunc(worker.TaskCancelExpiredOrder, cancelExpiredJob.ProcessTask)
 
 	go func() {
@@ -166,7 +183,12 @@ func main() {
 	// ── HTTP server ─────────────────────────────────────────────────────────
 	app := fiber.New()
 	app.Get("/swagger/*", serveSwaggerUI)
-	app.Use(cors.New(cors.ConfigDefault))
+	app.Use(cors.New(cors.Config{
+		AllowOrigins:  []string{"*"},
+		AllowHeaders:  []string{"Origin", "Content-Type", "Accept", "Authorization", "X-API-KEY", "X-Request-ID", "X-Tenant-ID"},
+		ExposeHeaders: []string{"X-Request-ID"},
+	}))
+	// app.Use(requestIDMiddleware())
 	app.Use(requestLogger())
 
 	// Asynq queue monitor dashboard — no API key (protected at infra level via Cloudflare Access)
@@ -184,12 +206,12 @@ func main() {
 
 	// ── Biteship webhook — public, no API key check ─────────────────────────
 	if shippingMod.Repository != nil {
-		shipping.RegisterWebhookHandler(apiRootGroup, cfg.BiteshipWebhookSignatureKey, cfg.BiteshipWebhookSignatureValue, shippingMod.Repository, tokokaryaClient, accountMod.Service, log.StandardLogger())
+		shipping.RegisterWebhookHandler(apiRootGroup, cfg.BiteshipWebhookSignatureKey, cfg.BiteshipWebhookSignatureValue, shippingMod.Repository, tokokaryaClient, accountMod.Service, appLogger)
 	}
 
 	// ── DurianPay payment webhook — public, no API key check ─────────────────
 	if durianpayClient != nil && paymentMod.EventRepo != nil {
-		webhook.RegisterIngestHandler(apiRootGroup, "/webhook/durianpay", durianpayClient, paymentMod.EventRepo, paymentMod.WebhookLogRepo, asynqClient, log.StandardLogger(), nil)
+		webhook.RegisterIngestHandler(apiRootGroup, "/webhook/durianpay", durianpayClient, paymentMod.EventRepo, paymentMod.WebhookLogRepo, asynqClient, appLogger, nil)
 	}
 
 	// ── Authenticated routes — each group carries its own API-key middleware ───
@@ -210,7 +232,7 @@ func main() {
 
 	geoapifyClient := geoapify.NewClient(cfg.GeoapifyAPIKey, cfg.GeoapifyBaseURL)
 	cachedGeocoder := geocoding.NewCachedGeocoder(geoapifyClient)
-	geocodingService := geocoding.NewService(cachedGeocoder, log.StandardLogger())
+	geocodingService := geocoding.NewService(cachedGeocoder, appLogger)
 	geocoding.RegisterHandlers(apiRootGroup.Group("/geocoding", auth), geocodingService)
 
 	// Payment module endpoints (requires DB).
@@ -220,14 +242,14 @@ func main() {
 			paymentMod.PaymentService,
 			paymentMod.Providers,
 			asynqClient,
-			log.StandardLogger(),
+			appLogger,
 			paymentMod.WebhookProcessor,
 		)
 	}
 
 	// ── Platform admin routes ────────────────────────────────────────────────────
 	if pool != nil && cfg.AdminJWTSecret != "" {
-		adminMod := adminmod.NewModule(pool, accountMod.Service, cfg.AdminJWTSecret, log.StandardLogger())
+		adminMod := adminmod.NewModule(pool, accountMod.Service, cfg.AdminJWTSecret, appLogger)
 
 		// Public: login — no API key or JWT required
 		adminmod.RegisterAuthHandlers(apiRootGroup.Group("/admin/auth"), adminMod.Service)
