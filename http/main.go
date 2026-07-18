@@ -189,7 +189,7 @@ func main() {
 		AllowHeaders:  []string{"Origin", "Content-Type", "Accept", "Authorization", "X-API-KEY", "X-Request-ID", "X-Tenant-ID"},
 		ExposeHeaders: []string{"X-Request-ID"},
 	}))
-	app.Use(requestIDMiddleware())
+	// app.Use(requestIDMiddleware())
 	app.Use(requestLogger())
 
 	// Asynq queue monitor dashboard — no API key (protected at infra level via Cloudflare Access)

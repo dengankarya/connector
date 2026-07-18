@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -10,11 +9,9 @@ import (
 	"github.com/dengankarya/connector/config"
 	_ "github.com/dengankarya/connector/docs"
 	"github.com/dengankarya/connector/internal/admin"
-	"github.com/dengankarya/connector/pkg/logger"
 	"github.com/dengankarya/connector/pkg/trace"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/adaptor"
-	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 )
@@ -79,21 +76,21 @@ func adminJWTAuth(secret string) fiber.Handler {
 	}
 }
 
-func requestIDMiddleware() fiber.Handler {
-	return func(c fiber.Ctx) error {
-		reqID := string(c.Request().Header.Peek("X-Request-ID"))
-		if reqID == "" {
-			reqID = uuid.New().String()
-		}
+// func requestIDMiddleware() fiber.Handler {
+// 	return func(c fiber.Ctx) error {
+// 		reqID := string(c.Request().Header.Peek("X-Request-ID"))
+// 		if reqID == "" {
+// 			reqID = uuid.New().String()
+// 		}
 
-		c.Set("X-Request-ID", reqID)
+// 		c.Set("X-Request-ID", reqID)
 
-		ctx := context.WithValue(c.Context(), logger.RequestIDKey, reqID)
-		c.SetContext(ctx)
+// 		ctx := context.WithValue(c.Context(), logger.RequestIDKey, reqID)
+// 		c.SetContext(ctx)
 
-		return c.Next()
-	}
-}
+// 		return c.Next()
+// 	}
+// }
 
 func requestLogger() fiber.Handler {
 	// return fiblog.New(fiblog.Config{
