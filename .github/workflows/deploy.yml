@@ -16,14 +16,24 @@ env:
   IMAGE_NAME: connector
 
 jobs:
-  deploy:
-    name: Deploy (${{ github.event.inputs.environment }})
+  # ── Job 1: Build image and push to registry ──────────────────────────────────
+  build-push:
+    name: Build & Push (${{ github.event.inputs.environment }})
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment }}
+
+    outputs:
+      sha_tag: ${{ github.event.inputs.environment }}-${{ steps.vars.outputs.sha }}
+      digest: ${{ steps.build.outputs.digest }}
+      image: ${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_NAME }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Short SHA
+        id: vars
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -40,18 +50,37 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build and push image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: |
             ${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.environment }}
-            ${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.environment }}-${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.environment }}-${{ steps.vars.outputs.sha }}
           cache-from: type=registry,ref=${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.environment }}
           cache-to: type=inline
 
+      - name: Summarise
+        run: |
+          echo "### Image pushed :rocket:" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| | |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Pinned tag** | \`${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.environment }}-${{ steps.vars.outputs.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Digest**     | \`${{ steps.build.outputs.digest }}\` |" >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Job 2: Trigger Coolify deployment ────────────────────────────────────────
+  deploy:
+    name: Deploy (${{ github.event.inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    needs: build-push
+
+    steps:
       - name: Trigger Coolify deployment
         run: |
+          echo "Deploying ${{ needs.build-push.outputs.image }}:${{ github.event.inputs.environment }} (${{ needs.build-push.outputs.sha_tag }})"
           curl --silent --show-error --fail \
             --request GET \
             --header "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}" \
