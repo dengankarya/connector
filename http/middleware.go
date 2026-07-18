@@ -4,15 +4,16 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/dengankarya/connector/common"
 	"github.com/dengankarya/connector/config"
 	_ "github.com/dengankarya/connector/docs"
 	"github.com/dengankarya/connector/internal/admin"
 	"github.com/dengankarya/connector/pkg/logger"
+	"github.com/dengankarya/connector/pkg/trace"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/adaptor"
-	fiblog "github.com/gofiber/fiber/v3/middleware/logger"
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	httpSwagger "github.com/swaggo/http-swagger/v2"
@@ -95,54 +96,54 @@ func requestIDMiddleware() fiber.Handler {
 }
 
 func requestLogger() fiber.Handler {
-	return fiblog.New(fiblog.Config{
-		LoggerFunc: func(c fiber.Ctx, data *fiblog.Data, _ *fiblog.Config) error {
-			fields := log.Fields{
-				"status":  c.Response().StatusCode(),
-				"method":  c.Method(),
-				"path":    c.Path(),
-				"ip":      c.IP(),
-				"latency": data.Stop.Sub(data.Start).String(),
-			}
+	// return fiblog.New(fiblog.Config{
+	// 	LoggerFunc: func(c fiber.Ctx, data *fiblog.Data, _ *fiblog.Config) error {
+	// 		fields := log.Fields{
+	// 			"status":  c.Response().StatusCode(),
+	// 			"method":  c.Method(),
+	// 			"path":    c.Path(),
+	// 			"ip":      c.IP(),
+	// 			"latency": data.Stop.Sub(data.Start).String(),
+	// 		}
 
-			if reqID, ok := c.Context().Value(logger.RequestIDKey).(string); ok && reqID != "" {
-				fields["request_id"] = reqID
-			}
+	// 		if reqID, ok := c.Context().Value(logger.RequestIDKey).(string); ok && reqID != "" {
+	// 			fields["request_id"] = reqID
+	// 		}
 
-			if data.ChainErr != nil {
-				fields["error"] = data.ChainErr.Error()
-				log.WithFields(fields).Error("request")
-			} else {
-				log.WithFields(fields).Info("request")
-			}
-			return nil
-		},
-	})
-	// return func(c fiber.Ctx) error {
-	// 	start := time.Now()
+	// 		if data.ChainErr != nil {
+	// 			fields["error"] = data.ChainErr.Error()
+	// 			log.WithFields(fields).Error("request")
+	// 		} else {
+	// 			log.WithFields(fields).Info("request")
+	// 		}
+	// 		return nil
+	// 	},
+	// })
+	return func(c fiber.Ctx) error {
+		start := time.Now()
 
-	// 	tp := c.Get("traceparent")
-	// 	if tp == "" {
-	// 		tp = trace.Generate()
-	// 	}
-	// 	c.SetContext(trace.StoreInContext(c.Context(), tp))
+		tp := c.Get("traceparent")
+		if tp == "" {
+			tp = trace.Generate()
+		}
+		c.SetContext(trace.StoreInContext(c.Context(), tp))
 
-	// 	err := c.Next()
+		err := c.Next()
 
-	// 	fields := log.Fields{
-	// 		"status":      c.Response().StatusCode(),
-	// 		"method":      c.Method(),
-	// 		"path":        c.Path(),
-	// 		"ip":          c.IP(),
-	// 		"latency":     time.Since(start).String(),
-	// 		"traceparent": tp,
-	// 	}
-	// 	if err != nil {
-	// 		fields["error"] = err.Error()
-	// 		log.WithFields(fields).Error("request")
-	// 	} else {
-	// 		log.WithFields(fields).Info("request")
-	// 	}
-	// 	return err
-	// }
+		fields := log.Fields{
+			"status":      c.Response().StatusCode(),
+			"method":      c.Method(),
+			"path":        c.Path(),
+			"ip":          c.IP(),
+			"latency":     time.Since(start).String(),
+			"traceparent": tp,
+		}
+		if err != nil {
+			fields["error"] = err.Error()
+			log.WithFields(fields).Error("request")
+		} else {
+			log.WithFields(fields).Info("request")
+		}
+		return err
+	}
 }
