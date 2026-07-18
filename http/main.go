@@ -75,6 +75,22 @@ func main() {
 	cfg := config.ParseENV()
 	appLogger := logger.New(log.StandardLogger())
 
+	if cfg.PosthogProjectToken != "" {
+		otelProvider, err := logger.InitOtelProvider(context.Background(), cfg.PosthogEndpoint, cfg.PosthogProjectToken, cfg.PosthogServiceName)
+		if err != nil {
+			log.WithError(err).Fatal("failed to initialize OTEL provider")
+		}
+		defer func() {
+			if err := otelProvider.Shutdown(context.Background()); err != nil {
+				log.WithError(err).Error("failed to shutdown OTEL provider")
+			}
+		}()
+
+		otelLogger := otelProvider.Logger(cfg.PosthogServiceName)
+		log.AddHook(logger.NewOtelLogrusHook(otelLogger))
+		log.Info("PostHog OpenTelemetry logging enabled")
+	}
+
 	// ── Tokokarya client — payment webhook forwarding ────────────────────────
 	var tokokaryaClient *tokokarya.Client
 	if cfg.TokokaryaURL != "" && cfg.TokokaryaAPIKey != "" {
