@@ -55,9 +55,6 @@ func (c *controller) handleGeocode(ctx fiber.Ctx) error {
 
 }
 
-func (c *controller) handleAutoComplete(ctx fiber.Ctx) error {
-
-}
 
 func badRequest(c fiber.Ctx, msg string) error {
 	return c.Status(http.StatusBadRequest).JSON(common.Response{
