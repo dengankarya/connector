@@ -100,17 +100,17 @@ func (ctrl *controller) login(c fiber.Ctx) error {
 //	@Description	Returns cross-tenant transactions of any type, newest first. Filter by tenant_id, type, date range, and offset pagination.
 //	@Tags			Admin
 //	@Produce		json
-//	@Param			tenant_id	query		int64									false	"Filter by tenant ID"
-//	@Param			type		query		string									false	"Filter by type (payment, shipping_topup, payout, shipping_hold, shipping_adjustment)"
-//	@Param			date_from	query		string									false	"Start of date range (RFC3339)"
-//	@Param			date_to		query		string									false	"End of date range (RFC3339)"
-//	@Param			limit		query		int										false	"Page size (default 20, max 100)"
-//	@Param			offset		query		int										false	"Pagination offset (default 0)"
+//	@Param			tenant_id	query		int64											false	"Filter by tenant ID"
+//	@Param			type		query		string											false	"Filter by type (payment, shipping_topup, payout, shipping_hold, shipping_adjustment)"
+//	@Param			date_from	query		string											false	"Start of date range (RFC3339)"
+//	@Param			date_to		query		string											false	"End of date range (RFC3339)"
+//	@Param			limit		query		int												false	"Page size (default 20, max 100)"
+//	@Param			offset		query		int												false	"Pagination offset (default 0)"
 //	@Success		200			{object}	common.Response{data=[]admin.AdminTransaction}	"Transaction list"
-//	@Failure		400			{object}	common.Response								"Invalid query params"
-//	@Failure		401			{object}	common.Response								"Unauthorized"
-//	@Failure		403			{object}	common.Response								"Forbidden"
-//	@Failure		500			{object}	common.Response								"Internal server error"
+//	@Failure		400			{object}	common.Response									"Invalid query params"
+//	@Failure		401			{object}	common.Response									"Unauthorized"
+//	@Failure		403			{object}	common.Response									"Forbidden"
+//	@Failure		500			{object}	common.Response									"Internal server error"
 //	@Router			/admin/transactions [get]
 func (ctrl *controller) listTransactions(c fiber.Ctx) error {
 	var filter AdminTxnFilter

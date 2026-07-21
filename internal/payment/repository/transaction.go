@@ -41,16 +41,16 @@ func (r *TransactionRepository) Create(ctx context.Context, txn *domain.PaymentT
 			id, tenant_id, type, order_number, idempotency_key,
 			provider, provider_invoice_id, provider_payment_id, checkout_url,
 			payment_method, payment_channel,
-			amount, currency, platform_fee, shipping_fee, merchant_amount,
+			amount, currency, platform_fee, shipping_fee, discount, merchant_amount,
 			status, description, metadata, payment_data,
 			expires_at, created_at, updated_at, version
 		) VALUES (
 			$1, $2, 'payment', $3, $4,
 			$5, $6, $7, $8,
 			$9, $10,
-			$11, $12, $13, $14, $15,
-			$16, $17, $18::jsonb, $19::jsonb,
-			$20, $21, $22, $23
+			$11, $12, $13, $14, $15, $16,
+			$17, $18, $19::jsonb, $20::jsonb,
+			$21, $22, $23, $24
 		)
 		ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`
 
@@ -58,7 +58,7 @@ func (r *TransactionRepository) Create(ctx context.Context, txn *domain.PaymentT
 		txn.ID, txn.TenantID, nilIfEmpty(txn.OrderNumber), txn.IdempotencyKey,
 		txn.Provider, nilIfEmpty(txn.ProviderInvoiceID), nilIfEmpty(txn.ProviderPaymentID), nilIfEmpty(txn.CheckoutURL),
 		nilIfEmpty(txn.PaymentMethod), nilIfEmpty(txn.PaymentChannel),
-		txn.Amount, txn.Currency, txn.PlatformFee, txn.ShippingFee, txn.MerchantAmount,
+		txn.Amount, txn.Currency, txn.PlatformFee, txn.ShippingFee, txn.Discount, txn.MerchantAmount,
 		string(txn.Status), nilIfEmpty(txn.Description), jsonParam(metaJSON, metaValid), jsonParam(payDataJSON, payDataValid),
 		txn.ExpiresAt, txn.CreatedAt, txn.UpdatedAt, txn.Version,
 	)
@@ -358,7 +358,7 @@ const txnColumns = `
 	COALESCE(payment_method, ''),
 	COALESCE(payment_channel, ''),
 	amount, currency,
-	COALESCE(platform_fee, 0), COALESCE(shipping_fee, 0), COALESCE(merchant_amount, 0),
+	COALESCE(platform_fee, 0), COALESCE(shipping_fee, 0), COALESCE(discount, 0), COALESCE(merchant_amount, 0),
 	status,
 	COALESCE(description, ''),
 	metadata,
@@ -385,7 +385,7 @@ func scanTransaction(row pgx.Row) (*domain.PaymentTransaction, error) {
 		&t.CheckoutURL,
 		&t.PaymentMethod,
 		&t.PaymentChannel,
-		&t.Amount, &t.Currency, &t.PlatformFee, &t.ShippingFee, &t.MerchantAmount,
+		&t.Amount, &t.Currency, &t.PlatformFee, &t.ShippingFee, &t.Discount, &t.MerchantAmount,
 		&status,
 		&t.Description,
 		&metaBytes,

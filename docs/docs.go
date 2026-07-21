@@ -835,7 +835,7 @@ const docTemplate = `{
         },
         "/admin/merchants/{tenantId}/topup": {
             "post": {
-                "description": "Credits the shipping wallet of the specified merchant. Requires admin JWT.",
+                "description": "Credits the shipping wallet of the specified merchant. Requires admin JWT + merchants:WRITE permission.",
                 "consumes": [
                     "application/json"
                 ],
@@ -896,6 +896,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/common.Response"
                         }
                     },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
@@ -951,14 +957,14 @@ const docTemplate = `{
                             ]
                         }
                     },
-                    "400": {
-                        "description": "Invalid query params",
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/common.Response"
                         }
                     },
-                    "401": {
-                        "description": "Unauthorized",
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "$ref": "#/definitions/common.Response"
                         }
@@ -974,7 +980,7 @@ const docTemplate = `{
         },
         "/admin/transactions": {
             "get": {
-                "description": "Returns cross-tenant transactions, newest first. Filter by tenant_id, date range, and cursor pagination.",
+                "description": "Returns cross-tenant transactions of any type, newest first. Filter by tenant_id, type, date range, and offset pagination.",
                 "produces": [
                     "application/json"
                 ],
@@ -992,6 +998,12 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "Filter by type (payment, shipping_topup, payout, shipping_hold, shipping_adjustment)",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "Start of date range (RFC3339)",
                         "name": "date_from",
                         "in": "query"
@@ -1003,15 +1015,15 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
-                        "type": "string",
-                        "description": "Pagination cursor from previous response",
-                        "name": "cursor",
+                        "type": "integer",
+                        "description": "Page size (default 20, max 100)",
+                        "name": "limit",
                         "in": "query"
                     },
                     {
                         "type": "integer",
-                        "description": "Page size (default 20, max 100)",
-                        "name": "limit",
+                        "description": "Pagination offset (default 0)",
+                        "name": "offset",
                         "in": "query"
                     }
                 ],
@@ -1027,7 +1039,10 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/github_com_dengankarya_connector_common.PaginationResponse-internal_admin_AdminTransaction"
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/internal_admin.AdminTransaction"
+                                            }
                                         }
                                     }
                                 }
@@ -1042,6 +1057,12 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "$ref": "#/definitions/common.Response"
                         }
@@ -2287,23 +2308,6 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_dengankarya_connector_common.PaginationResponse-internal_admin_AdminTransaction": {
-            "type": "object",
-            "properties": {
-                "has_more": {
-                    "type": "boolean"
-                },
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/internal_admin.AdminTransaction"
-                    }
-                },
-                "next_cursor": {
-                    "type": "string"
-                }
-            }
-        },
         "github_com_dengankarya_connector_common.Response": {
             "type": "object",
             "properties": {
@@ -2361,6 +2365,10 @@ const docTemplate = `{
                 },
                 "description": {
                     "type": "string"
+                },
+                "discount": {
+                    "description": "discount applied at order time; stored for reporting only",
+                    "type": "integer"
                 },
                 "estimated_settlement_time": {
                     "type": "string"
@@ -3441,6 +3449,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "bank_code": {
+                    "description": "Payout-specific (absent for other types)",
                     "type": "string"
                 },
                 "created_at": {
@@ -3458,39 +3467,14 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
-                "processed_at": {
-                    "type": "string"
-                },
-                "provider": {
-                    "type": "string"
-                },
-                "status": {
-                    "type": "string"
-                },
-                "tenant_id": {
-                    "type": "integer"
-                }
-            }
-        },
-        "internal_admin.AdminTransaction": {
-            "type": "object",
-            "properties": {
-                "amount": {
-                    "type": "integer"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "currency": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
                 "merchant_amount": {
                     "type": "integer"
                 },
+                "merchant_name": {
+                    "type": "string"
+                },
                 "order_number": {
+                    "description": "Payment-specific (absent for other types)",
                     "type": "string"
                 },
                 "paid_at": {
@@ -3502,6 +3486,9 @@ const docTemplate = `{
                 "platform_fee": {
                     "type": "integer"
                 },
+                "processed_at": {
+                    "type": "string"
+                },
                 "provider": {
                     "type": "string"
                 },
@@ -3510,6 +3497,76 @@ const docTemplate = `{
                 },
                 "tenant_id": {
                     "type": "integer"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_admin.AdminTransaction": {
+            "type": "object",
+            "properties": {
+                "account_name": {
+                    "type": "string"
+                },
+                "account_number": {
+                    "type": "string"
+                },
+                "amount": {
+                    "type": "integer"
+                },
+                "bank_code": {
+                    "description": "Payout-specific (absent for other types)",
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "failure_reason": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "merchant_amount": {
+                    "type": "integer"
+                },
+                "merchant_name": {
+                    "type": "string"
+                },
+                "order_number": {
+                    "description": "Payment-specific (absent for other types)",
+                    "type": "string"
+                },
+                "paid_at": {
+                    "type": "string"
+                },
+                "payment_method": {
+                    "type": "string"
+                },
+                "platform_fee": {
+                    "type": "integer"
+                },
+                "processed_at": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "tenant_id": {
+                    "type": "integer"
+                },
+                "type": {
+                    "type": "string"
                 }
             }
         },
@@ -3592,6 +3649,9 @@ const docTemplate = `{
                 "description": {
                     "type": "string"
                 },
+                "discount": {
+                    "type": "integer"
+                },
                 "idempotency_key": {
                     "type": "string"
                 },
@@ -3646,6 +3706,9 @@ const docTemplate = `{
                 },
                 "description": {
                     "type": "string"
+                },
+                "discount": {
+                    "type": "integer"
                 },
                 "expires_at": {
                     "type": "string"

@@ -66,6 +66,7 @@ type PaymentTransaction struct {
 	Currency          string            `json:"currency,omitempty"`
 	PlatformFee       int64             `json:"platform_fee,omitempty"`
 	ShippingFee       int64             `json:"shipping_fee,omitempty"`    // shipping credit topped up to merchant's balance
+	Discount          int64             `json:"discount,omitempty"`        // discount applied at order time; stored for reporting only
 	MerchantAmount    int64             `json:"merchant_amount,omitempty"` // Amount - PlatformFee - ShippingFee
 	Status            PaymentStatus     `json:"status,omitempty"`
 	Description       string            `json:"description,omitempty"`

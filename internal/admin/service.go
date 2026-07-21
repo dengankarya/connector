@@ -186,4 +186,3 @@ func (s *Service) Topup(ctx context.Context, tenantID int64, amount int64, curre
 		Note:     note,
 	})
 }
-

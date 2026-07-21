@@ -117,6 +117,7 @@ type CreateManualPaymentRequest struct {
 	Currency       string
 	PlatformFee    int64  // optional; connector commission; defaults to 0
 	ShippingFee    int64  // optional; topped up to merchant's shipping balance; defaults to 0
+	Discount       int64  // optional; discount applied at order time; stored for reporting only
 	PaymentMethod  string // e.g. "CASH", "BANK_TRANSFER"
 	PaymentChannel string // e.g. bank name, "-"
 	Description    string
@@ -156,6 +157,7 @@ func (s *PaymentService) CreateManualPayment(ctx context.Context, req CreateManu
 		Currency:          req.Currency,
 		PlatformFee:       req.PlatformFee,
 		ShippingFee:       req.ShippingFee,
+		Discount:          req.Discount,
 		MerchantAmount:    merchantAmount,
 		Status:            domain.StatusAwaitingPayment,
 		Description:       req.Description,
@@ -283,6 +285,7 @@ type CreateProviderPaymentRequest struct {
 	Currency           string
 	PlatformFee        int64
 	ShippingFee        int64
+	Discount           int64
 	CustomerName       string
 	CustomerEmail      string
 	CustomerMobile     string
@@ -362,6 +365,7 @@ func (s *PaymentService) CreateProviderPayment(ctx context.Context, prov provide
 		Currency:          req.Currency,
 		PlatformFee:       req.PlatformFee,
 		ShippingFee:       req.ShippingFee,
+		Discount:          req.Discount,
 		MerchantAmount:    merchantAmount,
 		Status:            domain.StatusAwaitingPayment,
 		Description:       req.Description,

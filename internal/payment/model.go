@@ -10,6 +10,7 @@ type CreatePaymentBody struct {
 	Currency           string            `json:"currency"`
 	PlatformFee        int64             `json:"platform_fee"`
 	ShippingFee        int64             `json:"shipping_fee"`
+	Discount           int64             `json:"discount"`
 	SuccessReturnURL   string            `json:"success_return_url"`
 	CancelReturnURL    string            `json:"cancel_return_url"`
 	Description        string            `json:"description"`
@@ -32,6 +33,7 @@ type CreateManualPaymentBody struct {
 	Currency       string            `json:"currency"`
 	PlatformFee    int64             `json:"platform_fee"`
 	ShippingFee    int64             `json:"shipping_fee"`
+	Discount       int64             `json:"discount"`
 	PaymentMethod  string            `json:"payment_method"`
 	PaymentChannel string            `json:"payment_channel"`
 	Description    string            `json:"description"`

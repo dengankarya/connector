@@ -40,17 +40,6 @@ definitions:
       next_cursor:
         type: string
     type: object
-  github_com_dengankarya_connector_common.PaginationResponse-internal_admin_AdminTransaction:
-    properties:
-      has_more:
-        type: boolean
-      items:
-        items:
-          $ref: '#/definitions/internal_admin.AdminTransaction'
-        type: array
-      next_cursor:
-        type: string
-    type: object
   github_com_dengankarya_connector_common.Response:
     properties:
       data: {}
@@ -96,6 +85,9 @@ definitions:
         type: string
       description:
         type: string
+      discount:
+        description: discount applied at order time; stored for reporting only
+        type: integer
       estimated_settlement_time:
         type: string
       expires_at:
@@ -905,6 +897,7 @@ definitions:
       amount:
         type: integer
       bank_code:
+        description: Payout-specific (absent for other types)
         type: string
       created_at:
         type: string
@@ -916,6 +909,19 @@ definitions:
         type: string
       id:
         type: string
+      merchant_amount:
+        type: integer
+      merchant_name:
+        type: string
+      order_number:
+        description: Payment-specific (absent for other types)
+        type: string
+      paid_at:
+        type: string
+      payment_method:
+        type: string
+      platform_fee:
+        type: integer
       processed_at:
         type: string
       provider:
@@ -924,20 +930,36 @@ definitions:
         type: string
       tenant_id:
         type: integer
+      type:
+        type: string
     type: object
   internal_admin.AdminTransaction:
     properties:
+      account_name:
+        type: string
+      account_number:
+        type: string
       amount:
         type: integer
+      bank_code:
+        description: Payout-specific (absent for other types)
+        type: string
       created_at:
         type: string
       currency:
+        type: string
+      description:
+        type: string
+      failure_reason:
         type: string
       id:
         type: string
       merchant_amount:
         type: integer
+      merchant_name:
+        type: string
       order_number:
+        description: Payment-specific (absent for other types)
         type: string
       paid_at:
         type: string
@@ -945,12 +967,16 @@ definitions:
         type: string
       platform_fee:
         type: integer
+      processed_at:
+        type: string
       provider:
         type: string
       status:
         type: string
       tenant_id:
         type: integer
+      type:
+        type: string
     type: object
   internal_admin.LoginBody:
     properties:
@@ -1004,6 +1030,8 @@ definitions:
         type: string
       description:
         type: string
+      discount:
+        type: integer
       idempotency_key:
         type: string
       metadata:
@@ -1041,6 +1069,8 @@ definitions:
         type: string
       description:
         type: string
+      discount:
+        type: integer
       expires_at:
         type: string
       idempotency_key:
@@ -1611,7 +1641,7 @@ paths:
       consumes:
       - application/json
       description: Credits the shipping wallet of the specified merchant. Requires
-        admin JWT.
+        admin JWT + merchants:WRITE permission.
       parameters:
       - description: Merchant tenant ID
         format: int64
@@ -1643,6 +1673,10 @@ paths:
             $ref: '#/definitions/common.Response'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: Forbidden
           schema:
             $ref: '#/definitions/common.Response'
         "500":
@@ -1678,12 +1712,12 @@ paths:
                     $ref: '#/definitions/internal_admin.AdminPayout'
                   type: array
               type: object
-        "400":
-          description: Invalid query params
-          schema:
-            $ref: '#/definitions/common.Response'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: Forbidden
           schema:
             $ref: '#/definitions/common.Response'
         "500":
@@ -1695,14 +1729,19 @@ paths:
       - Admin
   /admin/transactions:
     get:
-      description: Returns cross-tenant transactions, newest first. Filter by tenant_id,
-        date range, and cursor pagination.
+      description: Returns cross-tenant transactions of any type, newest first. Filter
+        by tenant_id, type, date range, and offset pagination.
       parameters:
       - description: Filter by tenant ID
         format: int64
         in: query
         name: tenant_id
         type: integer
+      - description: Filter by type (payment, shipping_topup, payout, shipping_hold,
+          shipping_adjustment)
+        in: query
+        name: type
+        type: string
       - description: Start of date range (RFC3339)
         in: query
         name: date_from
@@ -1711,13 +1750,13 @@ paths:
         in: query
         name: date_to
         type: string
-      - description: Pagination cursor from previous response
-        in: query
-        name: cursor
-        type: string
       - description: Page size (default 20, max 100)
         in: query
         name: limit
+        type: integer
+      - description: Pagination offset (default 0)
+        in: query
+        name: offset
         type: integer
       produces:
       - application/json
@@ -1729,7 +1768,9 @@ paths:
             - $ref: '#/definitions/common.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/github_com_dengankarya_connector_common.PaginationResponse-internal_admin_AdminTransaction'
+                  items:
+                    $ref: '#/definitions/internal_admin.AdminTransaction'
+                  type: array
               type: object
         "400":
           description: Invalid query params
@@ -1737,6 +1778,10 @@ paths:
             $ref: '#/definitions/common.Response'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: Forbidden
           schema:
             $ref: '#/definitions/common.Response'
         "500":

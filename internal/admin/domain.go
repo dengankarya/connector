@@ -118,20 +118,20 @@ type ShippingTopup struct {
 
 // AdminTransaction is a unified view of any financial event in the transactions table.
 type AdminTransaction struct {
-	ID          uuid.UUID  `json:"id"`
-	TenantID    int64      `json:"tenant_id"`
-	Type        string     `json:"type"`
-	Amount      int64      `json:"amount"`
-	Currency    string     `json:"currency"`
-	Description string     `json:"description,omitempty"`
-	Status      string     `json:"status"`
+	ID          uuid.UUID `json:"id"`
+	TenantID    int64     `json:"tenant_id"`
+	Type        string    `json:"type"`
+	Amount      int64     `json:"amount"`
+	Currency    string    `json:"currency"`
+	Description string    `json:"description,omitempty"`
+	Status      string    `json:"status"`
 	// Payment-specific (absent for other types)
-	OrderNumber   string     `json:"order_number,omitempty"`
-	Provider      string     `json:"provider,omitempty"`
-	PaymentMethod string     `json:"payment_method,omitempty"`
-	PlatformFee   int64      `json:"platform_fee,omitempty"`
-	MerchantAmount int64     `json:"merchant_amount,omitempty"`
-	PaidAt        *time.Time `json:"paid_at,omitempty"`
+	OrderNumber    string     `json:"order_number,omitempty"`
+	Provider       string     `json:"provider,omitempty"`
+	PaymentMethod  string     `json:"payment_method,omitempty"`
+	PlatformFee    int64      `json:"platform_fee,omitempty"`
+	MerchantAmount int64      `json:"merchant_amount,omitempty"`
+	PaidAt         *time.Time `json:"paid_at,omitempty"`
 	// Payout-specific (absent for other types)
 	BankCode      string     `json:"bank_code,omitempty"`
 	AccountNumber string     `json:"account_number,omitempty"`

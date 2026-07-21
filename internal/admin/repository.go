@@ -370,9 +370,9 @@ func (r *Repository) ListUsers(ctx context.Context) ([]*AdminUserSummary, error)
 // CreateUser inserts a new (non-super-admin) admin user.
 func (r *Repository) CreateUser(ctx context.Context, email, passwordHash string, roleID *uuid.UUID) (*AdminUserSummary, error) {
 	var (
-		u      AdminUserSummary
-		idStr  string
-		rID    *string
+		u     AdminUserSummary
+		idStr string
+		rID   *string
 	)
 	err := r.pool.QueryRow(ctx, `
 		INSERT INTO admin_users (email, password_hash, is_super_admin, role_id)
@@ -438,9 +438,9 @@ func (r *Repository) DeleteUser(ctx context.Context, id uuid.UUID) error {
 
 func scanAdminTransaction(row pgx.Row) (*AdminTransaction, error) {
 	var (
-		t                       AdminTransaction
-		idStr                   string
-		paidAt, processedAt     *time.Time
+		t                           AdminTransaction
+		idStr                       string
+		paidAt, processedAt         *time.Time
 		platformFee, merchantAmount *int64
 	)
 	if err := row.Scan(
