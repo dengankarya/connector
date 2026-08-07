@@ -38,6 +38,8 @@ type Configuration struct {
 	WebhookBaseURL string `env:"WEBHOOK_BASE_URL"` // base URL for webhook notifications (e.g. https://connector.example.com)
 
 	AdminJWTSecret string `env:"ADMIN_JWT_SECRET"` // HMAC secret for platform-admin JWT tokens
+
+	GooglePlacesAPIKey string `env:"GOOGLE_PLACES_API_KEY"`
 }
 
 func (c Configuration) IsThisRequestAuthenticated(apiKey string) bool {

@@ -888,6 +888,34 @@ definitions:
         description: Shipping wallet — available funds and funds on hold for pending
           shipments.
     type: object
+  internal_address.AddressSuggestion:
+    properties:
+      city:
+        type: string
+      country:
+        type: string
+      district:
+        type: string
+      formattedAddress:
+        type: string
+      latitude:
+        type: number
+      longitude:
+        type: number
+      postalCode:
+        type: string
+      province:
+        type: string
+      village:
+        type: string
+    type: object
+  internal_address.SearchResult:
+    properties:
+      suggestions:
+        items:
+          $ref: '#/definitions/internal_address.AddressSuggestion'
+        type: array
+    type: object
   internal_admin.AdminPayout:
     properties:
       account_name:
@@ -1601,6 +1629,41 @@ paths:
       summary: Get transaction detail
       tags:
       - Account
+  /address/search:
+    get:
+      description: Returns normalized Indonesian address suggestions from a free-text
+        query.
+      parameters:
+      - description: Address search query
+        in: query
+        name: q
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_address.SearchResult'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Search for addresses
+      tags:
+      - address
   /admin/auth/login:
     post:
       consumes:

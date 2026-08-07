@@ -772,6 +772,64 @@
                 }
             }
         },
+        "/address/search": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Returns normalized Indonesian address suggestions from a free-text query.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "address"
+                ],
+                "summary": "Search for addresses",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Address search query",
+                        "name": "q",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/internal_address.SearchResult"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/auth/login": {
             "post": {
                 "description": "Validates email + password and returns a signed JWT (24-hour expiry).",
@@ -3430,6 +3488,49 @@
                             "$ref": "#/definitions/internal_account.ShippingBalance"
                         }
                     ]
+                }
+            }
+        },
+        "internal_address.AddressSuggestion": {
+            "type": "object",
+            "properties": {
+                "city": {
+                    "type": "string"
+                },
+                "country": {
+                    "type": "string"
+                },
+                "district": {
+                    "type": "string"
+                },
+                "formattedAddress": {
+                    "type": "string"
+                },
+                "latitude": {
+                    "type": "number"
+                },
+                "longitude": {
+                    "type": "number"
+                },
+                "postalCode": {
+                    "type": "string"
+                },
+                "province": {
+                    "type": "string"
+                },
+                "village": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_address.SearchResult": {
+            "type": "object",
+            "properties": {
+                "suggestions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_address.AddressSuggestion"
+                    }
                 }
             }
         },

@@ -19,6 +19,7 @@ import (
 	"github.com/dengankarya/connector/common"
 	"github.com/dengankarya/connector/config"
 	"github.com/dengankarya/connector/internal/account"
+	"github.com/dengankarya/connector/internal/address"
 	adminmod "github.com/dengankarya/connector/internal/admin"
 	"github.com/dengankarya/connector/internal/geocoding"
 	"github.com/dengankarya/connector/internal/payment"
@@ -32,6 +33,7 @@ import (
 	"github.com/dengankarya/connector/pkg/dbconn"
 	"github.com/dengankarya/connector/pkg/durianpay"
 	"github.com/dengankarya/connector/pkg/geoapify"
+	"github.com/dengankarya/connector/pkg/googleplaces"
 	"github.com/dengankarya/connector/pkg/tokokarya"
 	"github.com/dengankarya/connector/pkg/wilayah"
 	"github.com/golang-migrate/migrate/v4"
@@ -212,6 +214,10 @@ func main() {
 	cachedGeocoder := geocoding.NewCachedGeocoder(geoapifyClient)
 	geocodingService := geocoding.NewService(cachedGeocoder, log.StandardLogger())
 	geocoding.RegisterHandlers(apiRootGroup.Group("/geocoding", auth), geocodingService)
+
+	googlePlacesClient := googleplaces.NewClient(cfg.GooglePlacesAPIKey)
+	addressSvc := address.NewService(googlePlacesClient, log.StandardLogger())
+	address.RegisterHandlers(apiRootGroup.Group("/address", auth), addressSvc)
 
 	// Payment module endpoints (requires DB).
 	if paymentMod.PaymentService != nil {
