@@ -83,6 +83,6 @@ jobs:
         run: |
           echo "Deploying ${{ needs.build-push.outputs.image }}:${{ github.event.inputs.environment }} (${{ needs.build-push.outputs.sha_tag }})"
           curl --silent --show-error --fail \
-            --request GET \
+            --request POST \
             --header "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}" \
             "${{ secrets.COOLIFY_WEBHOOK_URL }}"
