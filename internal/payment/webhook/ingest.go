@@ -119,8 +119,23 @@ func RegisterIngestHandler(
 
 		if err := eventRepo.Create(ctx, event); err != nil {
 			if err == domain.ErrDuplicateWebhookEvent {
-				log.WithField("provider_event_id", parsed.ProviderEventID).
-					Info("duplicate webhook received — idempotent")
+				eventID, resetErr := eventRepo.ResetFailedByProviderEventID(
+					ctx, prov.ProviderName(), parsed.ProviderEventID,
+				)
+				if resetErr != nil {
+					log.WithError(resetErr).Error("failed to reset failed webhook for replay")
+				} else if eventID != nil {
+					task, opts := NewTask(*eventID)
+					if _, enqErr := enqueuer.EnqueueContext(ctx, task, opts...); enqErr != nil {
+						log.WithError(enqErr).Error("failed to re-enqueue failed webhook for replay")
+					} else {
+						log.WithField("provider_event_id", parsed.ProviderEventID).
+							Info("duplicate webhook received — re-enqueued (was failed)")
+					}
+				} else {
+					log.WithField("provider_event_id", parsed.ProviderEventID).
+						Info("duplicate webhook received — idempotent")
+				}
 				return c.Status(http.StatusOK).JSON(map[string]string{"status": "ok"})
 			}
 			log.WithError(err).Error("failed to store webhook event")

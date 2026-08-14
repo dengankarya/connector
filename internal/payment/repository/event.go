@@ -135,6 +135,32 @@ func (r *WebhookEventRepository) MarkProcessed(ctx context.Context, id uuid.UUID
 	return nil
 }
 
+// ResetFailedByProviderEventID resets a webhook event to "received" if and only if its current
+// processing_status is "failed". Returns the event ID when reset happened, nil when the event
+// is in any other state (processed, processing, received, dead_lettered).
+func (r *WebhookEventRepository) ResetFailedByProviderEventID(ctx context.Context, provider, providerEventID string) (*uuid.UUID, error) {
+	var idStr string
+	err := dbFromContext(ctx, r.pool).QueryRow(ctx, `
+		UPDATE payment_webhook_events
+		SET processing_status   = 'received',
+		    last_error          = NULL,
+		    processing_attempts = 0
+		WHERE provider           = $1
+		  AND provider_event_id  = $2
+		  AND processing_status  = 'failed'
+		RETURNING id`,
+		provider, providerEventID,
+	).Scan(&idStr)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reset failed webhook_event: %w", err)
+	}
+	id := mustParseUUID(idStr)
+	return &id, nil
+}
+
 // ResetForReplay resets a failed/dead-lettered event back to "received" so it can be reprocessed.
 func (r *WebhookEventRepository) ResetForReplay(ctx context.Context, id uuid.UUID) error {
 	_, err := dbFromContext(ctx, r.pool).Exec(ctx, `
