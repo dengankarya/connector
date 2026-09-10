@@ -1,0 +1,16 @@
+with-expecter: true
+dir: "{{.InterfaceDir}}/mocks"
+filename: "mock_{{.InterfaceName}}.go"
+mockname: "Mock{{.InterfaceName}}"
+packages:
+  github.com/dengankarya/connector/internal/payment/service:
+    interfaces:
+      TransactionStore:
+      LedgerRecorder:
+      TxRunnerIface:
+  github.com/dengankarya/connector/internal/payment/provider:
+    interfaces:
+      PaymentProvider:
+  github.com/dengankarya/connector/internal/payment/jobs:
+    interfaces:
+      RefundStatusChecker:

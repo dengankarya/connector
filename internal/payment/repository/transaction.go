@@ -109,6 +109,23 @@ func (r *TransactionRepository) GetByProviderInvoiceID(ctx context.Context, prov
 	return scanTransaction(row)
 }
 
+// GetByOrderNumber fetches a payment transaction by tenant + order number without a row lock.
+func (r *TransactionRepository) GetByOrderNumber(ctx context.Context, tenantID int64, orderNumber string) (*domain.PaymentTransaction, error) {
+	row := dbFromContext(ctx, r.pool).QueryRow(ctx,
+		`SELECT `+txnColumns+` FROM transactions WHERE tenant_id = $1 AND order_number = $2 AND type = 'payment'`,
+		tenantID, orderNumber)
+	return scanTransaction(row)
+}
+
+// GetByOrderNumberForUpdate fetches a payment transaction by tenant + order number with SELECT FOR UPDATE.
+// Must be called within a DB transaction (ctx must carry a pgx.Tx via WithTx).
+func (r *TransactionRepository) GetByOrderNumberForUpdate(ctx context.Context, tenantID int64, orderNumber string) (*domain.PaymentTransaction, error) {
+	row := dbFromContext(ctx, r.pool).QueryRow(ctx,
+		`SELECT `+txnColumns+` FROM transactions WHERE tenant_id = $1 AND order_number = $2 AND type = 'payment' FOR UPDATE`,
+		tenantID, orderNumber)
+	return scanTransaction(row)
+}
+
 // Update persists all mutable fields and enforces the optimistic lock version.
 // Returns domain.ErrVersionConflict if the row was concurrently modified.
 func (r *TransactionRepository) Update(ctx context.Context, txn *domain.PaymentTransaction) error {
