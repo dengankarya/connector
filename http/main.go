@@ -138,6 +138,17 @@ func main() {
 	cancelExpiredJob = jobs.NewCancelExpiredOrderJob(tokokaryaClient, log.StandardLogger())
 	workerMux.HandleFunc(worker.TaskCancelExpiredOrder, cancelExpiredJob.ProcessTask)
 
+	if durianpayClient != nil && paymentMod.TransactionRepo != nil {
+		pollRefundJob := jobs.NewPollRefundStatusJob(
+			durianpayClient,
+			paymentMod.TransactionRepo,
+			paymentMod.TxRunner,
+			paymentMod.LedgerService,
+			log.StandardLogger(),
+		)
+		workerMux.HandleFunc(worker.TaskPollRefundStatus, pollRefundJob.ProcessTask)
+	}
+
 	go func() {
 		if err := workerServer.Start(workerMux); err != nil {
 			log.WithError(err).Fatal("asynq worker server failed")

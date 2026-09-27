@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/dengankarya/connector/internal/payment/domain"
-	"github.com/dengankarya/connector/internal/payment/ledger"
 	"github.com/dengankarya/connector/internal/payment/provider"
 	"github.com/dengankarya/connector/internal/payment/repository"
 	"github.com/google/uuid"
@@ -34,6 +33,8 @@ type TransactionStore interface {
 	GetByIDForUpdate(ctx context.Context, id uuid.UUID) (*domain.PaymentTransaction, error)
 	GetByProviderInvoiceIDForUpdate(ctx context.Context, provider, invoiceID string) (*domain.PaymentTransaction, error)
 	GetByProviderInvoiceID(ctx context.Context, provider, invoiceID string) (*domain.PaymentTransaction, error)
+	GetByOrderNumber(ctx context.Context, tenantID int64, orderNumber string) (*domain.PaymentTransaction, error)
+	GetByOrderNumberForUpdate(ctx context.Context, tenantID int64, orderNumber string) (*domain.PaymentTransaction, error)
 	Update(ctx context.Context, txn *domain.PaymentTransaction) error
 	ListDistinctTenants(ctx context.Context) ([]int64, error)
 	ListByTenant(ctx context.Context, tenantID int64, p repository.ListParams) ([]*domain.PaymentTransaction, error)
@@ -65,11 +66,22 @@ type PayoutStore interface {
 	ListByTenant(ctx context.Context, tenantID int64, limit, offset int) ([]*domain.Payout, error)
 }
 
+// LedgerRecorder abstracts the subset of ledger.Service used by PaymentService.
+type LedgerRecorder interface {
+	RecordManualPayment(ctx context.Context, txn *domain.PaymentTransaction) error
+	RecordRefund(ctx context.Context, txn *domain.PaymentTransaction, eventID uuid.UUID, refundAmount int64) error
+}
+
+// TxRunnerIface abstracts transaction execution, enabling unit tests without a real DB.
+type TxRunnerIface interface {
+	RunInTx(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
 // PaymentService handles payment creation and querying.
 type PaymentService struct {
 	txnRepo       TransactionStore
-	ledger        *ledger.Service
-	txRunner      *repository.TxRunner
+	ledger        LedgerRecorder
+	txRunner      TxRunnerIface
 	gatewayFinder GatewayAccountFinder // optional; nil = skip sub-account lookup
 	logger        *logrus.Logger
 }
@@ -78,8 +90,8 @@ type PaymentService struct {
 // gatewayFinder may be nil.
 func NewPaymentService(
 	txnRepo TransactionStore,
-	txRunner *repository.TxRunner,
-	ledgerSvc *ledger.Service,
+	txRunner TxRunnerIface,
+	ledgerSvc LedgerRecorder,
 	gatewayFinder GatewayAccountFinder,
 	logger *logrus.Logger,
 ) *PaymentService {
@@ -477,6 +489,82 @@ func (s *PaymentService) ListTransactions(ctx context.Context, req ListTransacti
 	}
 
 	return result, nil
+}
+
+// ─── Refund ───────────────────────────────────────────────────────────────────
+
+// RefundRequest is the input for initiating a refund.
+type RefundRequest struct {
+	TenantID    int64
+	OrderNumber string
+	Amount      int64
+	Reason      string
+}
+
+// Refund transitions a paid/settled transaction to refunding, calls the payment
+// provider to issue the refund, and records the ledger entries.
+//
+// The transaction is left in StatusRefunding after this call; a background
+// PollRefundStatusJob advances it to StatusRefunded once the provider confirms.
+func (s *PaymentService) Refund(ctx context.Context, req RefundRequest, providers map[string]provider.PaymentProvider) (*domain.PaymentTransaction, error) {
+	log := s.logger.WithFields(logrus.Fields{
+		"component":    "payment_service",
+		"operation":    "refund",
+		"tenant_id":    req.TenantID,
+		"order_number": req.OrderNumber,
+		"amount":       req.Amount,
+	})
+
+	var txn *domain.PaymentTransaction
+	err := s.txRunner.RunInTx(ctx, func(txCtx context.Context) error {
+		var err error
+		txn, err = s.txnRepo.GetByOrderNumberForUpdate(txCtx, req.TenantID, req.OrderNumber)
+		if err != nil {
+			return err
+		}
+
+		if txn.Status == domain.StatusRefunded {
+			log.Info("refund: already refunded — idempotent")
+			return nil
+		}
+
+		if err := txn.TransitionTo(domain.StatusRefunding); err != nil {
+			return fmt.Errorf("refund: %w", err)
+		}
+		if err := s.txnRepo.Update(txCtx, txn); err != nil {
+			return fmt.Errorf("refund: persist refunding status: %w", err)
+		}
+
+		prov, ok := providers[txn.Provider]
+		if !ok {
+			return fmt.Errorf("refund: no provider configured for %q", txn.Provider)
+		}
+
+		refund, err := prov.CreateRefund(txCtx, provider.CreateRefundRequest{
+			ProviderInvoiceID: txn.ProviderInvoiceID,
+			ProviderPaymentID: txn.ProviderPaymentID,
+			Amount:            req.Amount,
+			Reason:            req.Reason,
+			ExternalID:        fmt.Sprintf("refund:%s", txn.ID),
+		})
+		if err != nil {
+			return fmt.Errorf("refund: provider: %w", err)
+		}
+
+		if err := s.ledger.RecordRefund(txCtx, txn, uuid.New(), req.Amount); err != nil {
+			return fmt.Errorf("refund: ledger: %w", err)
+		}
+
+		log.WithFields(logrus.Fields{
+			"provider_refund_id": refund.ProviderRefundID,
+			"status":             txn.Status,
+		}).Info("refund initiated, ledger updated")
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return txn, nil
 }
 
 // ─── cursor encoding ──────────────────────────────────────────────────────────

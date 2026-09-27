@@ -47,6 +47,7 @@ func RegisterPaymentHandlers(
 	ctrl := &paymentController{svc: svc, providers: providers, enqueuer: enqueuer, webhookProcessor: wp, logger: logger}
 
 	mux.Post("/cancel-schedule", ctrl.scheduleOrderCancellation)
+	mux.Post("/refund", ctrl.refund)
 	mux.Post("/manual", ctrl.createManualPayment)
 	mux.Post("/manual/:id/confirm", ctrl.confirmManualPayment)
 	mux.Get("/:id", ctrl.getPayment)
@@ -405,6 +406,94 @@ func (ctrl *paymentController) scheduleOrderCancellation(c fiber.Ctx) error {
 		Data: map[string]any{
 			"order_number":     body.OrderNumber,
 			"should_expire_at": body.ShouldExpireAt,
+		},
+	})
+}
+
+// refund godoc
+//
+//	@Summary		Initiate refund
+//	@Description	Initiates a refund for a paid or settled payment transaction. The transaction is immediately transitioned to "refunding"; a background job polls the provider until the refund is confirmed and advances the status to "refunded".
+//	@Tags			Payments
+//	@Accept			json
+//	@Produce		json
+//	@Param			X-Tenant-ID	header		int64			true	"Tenant ID"
+//	@Param			body		body		RefundBody		true	"Refund request"
+//	@Success		200			{object}	common.Response	"Refund initiated"
+//	@Failure		400			{object}	common.Response	"Invalid request"
+//	@Failure		404			{object}	common.Response	"Transaction not found"
+//	@Failure		409			{object}	common.Response	"Invalid status transition"
+//	@Failure		500			{object}	common.Response	"Internal server error"
+//	@Security		ApiKeyAuth
+//	@Router			/payments/refund [post]
+func (ctrl *paymentController) refund(c fiber.Ctx) error {
+	tenantID := mustParseIntHeader(c, "X-Tenant-ID")
+	if tenantID == 0 {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: "X-Tenant-ID header is required",
+		})
+	}
+
+	var body RefundBody
+	if err := c.Bind().JSON(&body); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: err.Error(),
+		})
+	}
+	if body.OrderNumber == "" {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: "order_number is required",
+		})
+	}
+	if body.Amount <= 0 {
+		return c.Status(http.StatusBadRequest).JSON(common.Response{
+			Status: "Bad Request", Error: "amount must be greater than zero",
+		})
+	}
+
+	txn, err := ctrl.svc.Refund(c.Context(), paymentservice.RefundRequest{
+		TenantID:    tenantID,
+		OrderNumber: body.OrderNumber,
+		Amount:      body.Amount,
+		Reason:      body.Reason,
+	}, ctrl.providers)
+	if err != nil {
+		var nf domain.ErrNotFound
+		if isErrNotFound(err, &nf) {
+			return c.Status(http.StatusNotFound).JSON(common.Response{
+				Status: "Not Found", Error: nf.Error(),
+			})
+		}
+		var inv domain.ErrInvalidStatusTransition
+		if errors.As(err, &inv) {
+			return c.Status(http.StatusConflict).JSON(common.Response{
+				Status: "Conflict", Error: inv.Error(),
+			})
+		}
+		ctrl.logger.WithFields(logrus.Fields{
+			"order_number": body.OrderNumber,
+			"error":        err.Error(),
+		}).Error("refund: failed")
+		return c.Status(http.StatusInternalServerError).JSON(common.Response{
+			Status: "Internal Server Error", Error: err.Error(),
+		})
+	}
+
+	if ctrl.enqueuer != nil && txn.Status == domain.StatusRefunding {
+		task, opts := jobs.NewPollRefundStatusTask(txn.ID, txn.ProviderPaymentID, txn.TenantID, body.Amount)
+		if _, err := ctrl.enqueuer.EnqueueContext(c.Context(), task, opts...); err != nil {
+			ctrl.logger.WithFields(logrus.Fields{
+				"transaction_id": txn.ID,
+				"error":          err.Error(),
+			}).Error("refund: enqueue poll job failed")
+		}
+	}
+
+	return c.Status(http.StatusOK).JSON(common.Response{
+		Status: "OK",
+		Data: RefundResponse{
+			TransactionID: txn.ID.String(),
+			Status:        string(txn.Status),
 		},
 	})
 }

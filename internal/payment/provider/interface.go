@@ -64,6 +64,7 @@ type Invoice struct {
 // CreateRefundRequest is the provider-agnostic refund request.
 type CreateRefundRequest struct {
 	ProviderInvoiceID string
+	ProviderPaymentID string // provider payment ID (e.g. DurianPay pay_...) required for refund lookup
 	Amount            int64
 	Reason            string
 	ExternalID        string // caller's idempotency key for this refund
@@ -72,6 +73,7 @@ type CreateRefundRequest struct {
 // Refund is a provider-agnostic refund response.
 type Refund struct {
 	ProviderRefundID string
+	ExternalID       string // caller's idempotency key (ref_id) echoed back
 	Amount           int64
 	Status           string
 }

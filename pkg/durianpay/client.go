@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/dengankarya/connector/internal/payment/provider"
@@ -449,8 +450,77 @@ func (c *Client) CancelInvoice(_ context.Context, _ string) error {
 	return fmt.Errorf("durianpay: CancelInvoice not implemented")
 }
 
-func (c *Client) CreateRefund(_ context.Context, _ provider.CreateRefundRequest) (*provider.Refund, error) {
-	return nil, fmt.Errorf("durianpay: CreateRefund not implemented")
+// createRefundRequest is the DurianPay POST /v1/refunds request body.
+type createRefundRequest struct {
+	RefID     string `json:"ref_id"`
+	PaymentID string `json:"payment_id"`
+	Amount    string `json:"amount"`
+	Notes     string `json:"notes,omitempty"`
+}
+
+// durianpayRefund is a single refund record returned by DurianPay.
+type durianpayRefund struct {
+	ID     string `json:"id"`
+	RefID  string `json:"ref_id"`
+	Amount string `json:"amount"`
+	Status string `json:"status"`
+}
+
+// refundListResponse is the GET /v1/refunds/payment/{id} response shape.
+type refundListResponse struct {
+	Data []durianpayRefund `json:"data"`
+}
+
+// GetRefundsByPaymentID fetches all refunds for a DurianPay payment ID.
+// The ExternalID field is populated from the DurianPay ref_id.
+func (c *Client) GetRefundsByPaymentID(ctx context.Context, paymentID string) ([]provider.Refund, error) {
+	var resp refundListResponse
+	if err := c.get(ctx, "/v1/refunds/payment/"+paymentID, &resp); err != nil {
+		return nil, fmt.Errorf("durianpay: get refunds by payment id: %w", err)
+	}
+	result := make([]provider.Refund, len(resp.Data))
+	for i, r := range resp.Data {
+		amt, _ := strconv.ParseInt(r.Amount, 10, 64)
+		result[i] = provider.Refund{
+			ProviderRefundID: r.ID,
+			ExternalID:       r.RefID,
+			Amount:           amt,
+			Status:           r.Status,
+		}
+	}
+	return result, nil
+}
+
+func (c *Client) CreateRefund(ctx context.Context, req provider.CreateRefundRequest) (*provider.Refund, error) {
+	// Idempotency: return existing refund if one with the same ref_id already exists.
+	existing, err := c.GetRefundsByPaymentID(ctx, req.ProviderPaymentID)
+	if err != nil {
+		return nil, fmt.Errorf("durianpay: create refund: check existing: %w", err)
+	}
+	for i := range existing {
+		if existing[i].ExternalID == req.ExternalID {
+			return &existing[i], nil
+		}
+	}
+
+	body := createRefundRequest{
+		RefID:     req.ExternalID,
+		PaymentID: req.ProviderPaymentID,
+		Amount:    strconv.FormatInt(req.Amount, 10),
+		Notes:     req.Reason,
+	}
+	var raw durianpayRefund
+	if err := c.post(ctx, "/v1/refunds", body, &raw); err != nil {
+		return nil, fmt.Errorf("durianpay: create refund: %w", err)
+	}
+
+	amt, _ := strconv.ParseInt(raw.Amount, 10, 64)
+	return &provider.Refund{
+		ProviderRefundID: raw.ID,
+		ExternalID:       raw.RefID,
+		Amount:           amt,
+		Status:           raw.Status,
+	}, nil
 }
 
 func (c *Client) CreatePayout(_ context.Context, _ provider.CreatePayoutRequest) (*provider.Payout, error) {

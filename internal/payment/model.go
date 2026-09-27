@@ -55,3 +55,16 @@ type ScheduleOrderCancellationBody struct {
 	OrderNumber    string `json:"order_number"`
 	ShouldExpireAt int64  `json:"should_expired_at"` // Unix timestamp
 }
+
+// RefundBody is the request body for POST /payments/refund.
+type RefundBody struct {
+	OrderNumber string `json:"order_number"`
+	Amount      int64  `json:"amount"`
+	Reason      string `json:"reason"`
+}
+
+// RefundResponse is the response body for POST /payments/refund.
+type RefundResponse struct {
+	TransactionID string `json:"transaction_id"`
+	Status        string `json:"status"`
+}

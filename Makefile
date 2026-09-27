@@ -1,7 +1,10 @@
-.PHONY: run redis redis-stop redis-logs docker-build docs generate-client migrate-new cf-tunel
+.PHONY: run redis redis-stop redis-logs docker-build docs generate-client migrate-new cf-tunel test
 
 run:
 	go run http/*.go
+
+test:
+	go test ./... -race
 
 docker-build:
 	docker build -t connector .
